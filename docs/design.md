@@ -71,8 +71,24 @@ base_mw           = PUE × N_MACHINES × IDLE_WATTS_PER_MACHINE / 1e6    # 固�
 
 - “无能源感知 + 不延迟”：`batch[t] = batch_mwh[t]`（观测值），BESS 不动作。
 
+### 4.5 首层结果（仅批处理能量平移，尚未加功率/爬坡/BESS/DRO）
+
+Jan 2025 窗口（PySCIPOpt，LP）：
+
+- 基线批处理购电成本 40,316.99（无平移）；
+- 柔性平移后 18,081.89；
+- **成本下降 55.15%**。
+
+注意：这是“能量平移”的松弛上界（`batch[t] ≤ window[t]` 且无并网/爬坡约束），绝对值还受 §3 的 core 口径不确定性影响，但下降比例是尺度不变的。后续加物理约束后会下降。
+
 ## 5. 待定
 
 - 本地 PV 2025 剖面未拉；先用 ERCO 系统太阳形状代理或暂设 `p_pv[t]=0`。
 - BESS 尺寸/效率/SOC 按场景给定，需定默认值。
 - DRO 形式：预算 RO（Γ）；模糊集用 2024 能源残差 + 算力到达/时长经验分布标定。
+
+## 6. config 参数评审（进行中）
+
+- 预测/窗口参数（90 天历史、48h 保护、28 天基线、2024 验证、Ridge α）与 `docs/forecasting.md` 一致，合理。
+- 功率模型：`PUE=1.2`、`WATTS_PER_CORE=3.0`、`IDLE_WATTS_PER_MACHINE=150`、`N_MACHINES=4034` 各自在合理区间；但 `online_reserved_cores(362k) + batch 平均核数(514k) > 物理核数(387k)`，说明“在线静态预留”和“plan_cpu×instance_num”都是上界代理、非同时实际占用，绝对 MW 会被高估约 2 倍。优化对尺度不敏感，绝对 MW/$ 需后续用利用率假设归一化。
+- `MAX_BATCH_DURATION_HOURS=168`、`COMPLETION_SLACK_HOURS=3` 目前只是窗口文件名 `d168_h3` 的残留标识，非实际约束，可保留。
