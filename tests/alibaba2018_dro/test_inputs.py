@@ -15,7 +15,7 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 try:
-    from experiments.paper.alibaba2018_dro.energy import (
+    from experiments.alibaba2018_dro.energy import (
         build_study_window_rows,
         day_ahead_cutoff_utc,
         to_energy_interval,
@@ -26,12 +26,12 @@ except ImportError:
     to_energy_interval = None
 
 try:
-    from experiments.paper.alibaba2018_dro.energy import write_study_inputs
+    from experiments.alibaba2018_dro.energy import write_study_inputs
 except ImportError:
     write_study_inputs = None
 
 try:
-    from experiments.paper.alibaba2018_dro.forecasting import (
+    from experiments.alibaba2018_dro.forecasting import (
         forecast_delivery_day,
         validate_ridge_2024,
     )
@@ -40,7 +40,7 @@ except ImportError:
     validate_ridge_2024 = None
 
 try:
-    from experiments.paper.alibaba2018_dro.eia_history import (
+    from experiments.alibaba2018_dro.eia_history import (
         build_december_context,
         load_erco_history,
         load_houston_dam_prices,
@@ -169,11 +169,11 @@ class PaperInputTests(unittest.TestCase):
         ]
         with (
             patch(
-                "experiments.paper.alibaba2018_dro.eia_history._xlsx_payload_from_archive",
+                "experiments.alibaba2018_dro.eia_history._xlsx_payload_from_archive",
                 return_value=BytesIO(b"xlsx"),
             ),
             patch(
-                "experiments.paper.alibaba2018_dro.eia_history.iter_xlsx_rows",
+                "experiments.alibaba2018_dro.eia_history.iter_xlsx_rows",
                 side_effect=[iter(())] * 11 + [iter(source_rows)],
             ),
         ):
@@ -237,7 +237,7 @@ class PaperInputTests(unittest.TestCase):
             },
         ]
         with patch(
-            "experiments.paper.alibaba2018_dro.eia_history.iter_xlsx_rows",
+            "experiments.alibaba2018_dro.eia_history.iter_xlsx_rows",
             return_value=iter(source_rows),
         ):
             rows = loader(Path("unused.xlsx"))
@@ -323,7 +323,7 @@ class PaperInputTests(unittest.TestCase):
     def test_shared_annual_table_backfills_only_the_missing_december_renewables(
         self,
     ) -> None:
-        project_root = Path(__file__).parents[3]
+        project_root = Path(__file__).parents[2]
         annual_table = project_root / "data" / "energy" / "ercot_2025_houston_hourly.csv"
         with annual_table.open("r", encoding="utf-8", newline="") as input_file:
             rows = list(csv.DictReader(input_file))
@@ -443,7 +443,7 @@ class PaperInputTests(unittest.TestCase):
             self.assertNotIn(str(output_directory), json.dumps(manifest_payload))
 
     def test_preparation_script_exposes_explicit_raw_source_arguments(self) -> None:
-        project_root = Path(__file__).parents[3]
+        project_root = Path(__file__).parents[2]
         completed = subprocess.run(
             [
                 sys.executable,

@@ -127,7 +127,7 @@ alibaba2018_dro_bundle/
 ├── README.md                          # 本文档
 ├── docs/
 │   └── 因果预测设计.md                  # 48h 保护因果预测设计
-├── experiments/paper/alibaba2018_dro/
+├── experiments/alibaba2018_dro/
 │   ├── __init__.py
 │   ├── config.py                       # 窗口/预测常量
 │   ├── eia_history.py                  # 读 EIA XLSX（标准库，无依赖）
@@ -137,7 +137,7 @@ alibaba2018_dro_bundle/
 │   ├── prepare_alibaba2018_dro_inputs.py            # 能源输入物化脚本
 │   ├── analyze_v2018_workload.py                    # workload 流式统计
 │   └── build_compute_uncertainty_envelope.py        # 算力侧不确定集与柔性包络
-├── tests/paper/alibaba2018_dro/test_inputs.py       # 输入合同测试
+├── tests/alibaba2018_dro/test_inputs.py             # 输入合同测试
 └── data/
     ├── energy/
     │   ├── ercot_2025_houston_hourly.csv          # 2025 DAM 价 + EIA 风光/碳
@@ -152,6 +152,6 @@ alibaba2018_dro_bundle/
 
 ## 13. 启动提示
 
-- 代码包名已统一为 `alibaba2018_dro`，可直接 `import experiments.paper.alibaba2018_dro.forecasting`。
+- 代码包名已统一为 `alibaba2018_dro`，可直接 `import experiments.alibaba2018_dro.forecasting`。
 - 算力侧 Alibaba v2018 已下载并校验（`machine_meta` / `container_meta` / `batch_task`；`batch_task.csv` 较大，已 gitignore）。
 - `test_inputs.py` 在本环境依赖的 XLSX 读取库可能需要先安装 `openpyxl`（或改用包内标准库 `eia_history.iter_xlsx_rows`）后再跑。

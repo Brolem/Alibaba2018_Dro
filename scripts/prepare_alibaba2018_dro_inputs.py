@@ -9,11 +9,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from experiments.paper.alibaba2018_dro.energy import (
+from experiments.alibaba2018_dro.energy import (
     sha256_file,
     write_study_inputs,
 )
-from experiments.paper.alibaba2018_dro.eia_history import (
+from experiments.alibaba2018_dro.eia_history import (
     build_december_context,
     load_erco_history,
     load_houston_dam_prices,
@@ -24,7 +24,6 @@ ENERGY_DIRECTORY = PROJECT_ROOT / "data" / "energy"
 DEFAULT_OUTPUT_DIRECTORY = (
     PROJECT_ROOT
     / "outputs"
-    / "paper"
     / "alibaba2018_dro"
     / "day_ahead"
     / "inputs"
@@ -56,7 +55,7 @@ def _source_argument(value: str) -> tuple[str, Path]:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Materialize paper-only 1,062-hour ERCOT Houston inputs "
+            "Materialize 1,062-hour ERCOT Houston inputs "
             "from auditable local source records."
         )
     )
