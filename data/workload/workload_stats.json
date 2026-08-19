@@ -1,0 +1,1038 @@
+{
+  "note": "资源需求口径的静态代理，未使用 machine_usage/container_usage；在线负载按 8 天全时段在线的静态预留口径估计，不是实测能耗。",
+  "nominal_horizon_hours": 192,
+  "batch_task": {
+    "total_tasks": 14295731,
+    "total_instances": 1403141267,
+    "unique_jobs": 4201014,
+    "negative_duration_tasks": 54580,
+    "max_duration_hours": 162.19055555555556,
+    "duration": {
+      "mean_hours": 0.02510073036255835,
+      "median_hours": 0.0,
+      "p90_hours": 0.0
+    },
+    "task_type": {
+      "1": {
+        "tasks": 12207703,
+        "instances": 1361944483,
+        "core_seconds": 305270766446.0,
+        "plan_cpu_sum": 970215950.0,
+        "plan_mem_sum": 4044712.4003075976,
+        "duration_seconds_sum": 804301512,
+        "duration_seconds_valid": 12207703,
+        "mean_duration_hours": 0.018301320622451798
+      },
+      "10": {
+        "tasks": 322929,
+        "instances": 3014102,
+        "core_seconds": 1771034041.25,
+        "plan_cpu_sum": 28926950.0,
+        "plan_mem_sum": 32292.79999981057,
+        "duration_seconds_sum": 68466393,
+        "duration_seconds_valid": 322929,
+        "mean_duration_hours": 0.05889357258096981
+      },
+      "11": {
+        "tasks": 28777,
+        "instances": 1772155,
+        "core_seconds": 13377365283.0,
+        "plan_cpu_sum": 6892900.0,
+        "plan_mem_sum": 12973.760000000311,
+        "duration_seconds_sum": 32940985,
+        "duration_seconds_valid": 28777,
+        "mean_duration_hours": 0.31797176950728395
+      },
+      "12": {
+        "tasks": 8889,
+        "instances": 1928027,
+        "core_seconds": 4539727224.0,
+        "plan_cpu_sum": 896200.0,
+        "plan_mem_sum": 6165.760000000622,
+        "duration_seconds_sum": 1998656,
+        "duration_seconds_valid": 8889,
+        "mean_duration_hours": 0.06245721928475894
+      },
+      "2": {
+        "tasks": 12,
+        "instances": 229,
+        "core_seconds": 11847.4,
+        "plan_cpu_sum": 180.0,
+        "plan_mem_sum": 0.52,
+        "duration_seconds_sum": 1754,
+        "duration_seconds_valid": 12,
+        "mean_duration_hours": 0.04060185185185185
+      },
+      "3": {
+        "tasks": 35061,
+        "instances": 7195287,
+        "core_seconds": 10347119516.84,
+        "plan_cpu_sum": 3998924.0,
+        "plan_mem_sum": 23149.969999995184,
+        "duration_seconds_sum": 23873650,
+        "duration_seconds_valid": 35061,
+        "mean_duration_hours": 0.18914376214153744
+      },
+      "4": {
+        "tasks": 5519,
+        "instances": 44497,
+        "core_seconds": 15418929.5,
+        "plan_cpu_sum": 275950.0,
+        "plan_mem_sum": 1048.6100000001484,
+        "duration_seconds_sum": 386942,
+        "duration_seconds_valid": 5519,
+        "mean_duration_hours": 0.01947524712608967
+      },
+      "5": {
+        "tasks": 399489,
+        "instances": 399489,
+        "core_seconds": 536472409.0,
+        "plan_cpu_sum": 156121000.0,
+        "plan_mem_sum": 703824.4199932587,
+        "duration_seconds_sum": 168112233,
+        "duration_seconds_valid": 399489,
+        "mean_duration_hours": 0.11689393825612221
+      },
+      "6": {
+        "tasks": 1226388,
+        "instances": 15602608,
+        "core_seconds": 1037494923.1969112,
+        "plan_cpu_sum": 17812980.0,
+        "plan_mem_sum": 51510.74000032226,
+        "duration_seconds_sum": 163464229,
+        "duration_seconds_valid": 1226388,
+        "mean_duration_hours": 0.03702476726596948
+      },
+      "7": {
+        "tasks": 488,
+        "instances": 69205,
+        "core_seconds": 0.0,
+        "plan_cpu_sum": 99000.0,
+        "plan_mem_sum": 638.5800000000033,
+        "duration_seconds_sum": 0,
+        "duration_seconds_valid": 488,
+        "mean_duration_hours": 0.0
+      },
+      "8": {
+        "tasks": 53933,
+        "instances": 10578348,
+        "core_seconds": 18270820926.0,
+        "plan_cpu_sum": 7983900.0,
+        "plan_mem_sum": 30019.610000002347,
+        "duration_seconds_sum": 26543092,
+        "duration_seconds_valid": 53933,
+        "mean_duration_hours": 0.13670815847646361
+      },
+      "9": {
+        "tasks": 6543,
+        "instances": 592837,
+        "core_seconds": 426402002.2,
+        "plan_cpu_sum": 638260.0,
+        "plan_mem_sum": 3242.5499999999142,
+        "duration_seconds_sum": 1710395,
+        "duration_seconds_valid": 6543,
+        "mean_duration_hours": 0.07261343760082871
+      }
+    },
+    "dag_classification": {
+      "dag_style": 12004353,
+      "independent_task_prefix": 2088028,
+      "other": 203350,
+      "other_top_names": [
+        [
+          "MergeTask",
+          195731
+        ],
+        [
+          "R2_1_Stg8",
+          1239
+        ],
+        [
+          "M1_Stg8",
+          1239
+        ],
+        [
+          "R4_2_Stg9",
+          1239
+        ],
+        [
+          "J10_7_9_Stg4",
+          648
+        ],
+        [
+          "M9_Stg4",
+          648
+        ],
+        [
+          "M7_Stg3",
+          648
+        ],
+        [
+          "L5_Stg12",
+          648
+        ],
+        [
+          "J30_4_5_6_8_9_10_12_13_14_16_17_18_19_21_22_24_25_",
+          222
+        ],
+        [
+          "M8_2_5_7_9_10_11_12_13_14_15_16_17_18_19_20_21_22_",
+          193
+        ],
+        [
+          "J28_4_5_6_7_8_10_11_12_14_15_16_17_19_20_22_23_24_",
+          181
+        ],
+        [
+          "J49_1_2_3_4_7_10_13_17_19_21_23_26_29_32_35_39_41_",
+          35
+        ],
+        [
+          "J56_1_2_3_4_7_10_13_17_19_21_23_26_29_32_35_39_43_",
+          35
+        ],
+        [
+          "J41_1_2_3_4_7_10_13_17_19_21_23_26_27_28_29_31_33_",
+          35
+        ],
+        [
+          "M9_5_10_11_12_13_14_15_16_17_18_19_20_21_22_23_24_",
+          29
+        ],
+        [
+          "M7_5_10_11_12_13_14_15_16_17_18_19_20_21_22_23_24_",
+          29
+        ],
+        [
+          "M8_5_10_11_12_13_14_15_16_17_18_19_20_21_22_23_24_",
+          29
+        ],
+        [
+          "M6_5_10_11_12_13_14_15_16_17_18_19_20_21_22_23_24_",
+          29
+        ],
+        [
+          "M1_Stg1",
+          17
+        ],
+        [
+          "J26_2_3_4_5_6_7_8_9_10_11_12_13_14_15_16_17_18_19_",
+          15
+        ]
+      ]
+    },
+    "arrival_hourly": {
+      "0": {
+        "tasks": 24102,
+        "arriving_cores": 5653.5
+      },
+      "3": {
+        "tasks": 7,
+        "arriving_cores": 167.0
+      },
+      "4": {
+        "tasks": 5,
+        "arriving_cores": 94.5
+      },
+      "5": {
+        "tasks": 19,
+        "arriving_cores": 6111.5
+      },
+      "6": {
+        "tasks": 6,
+        "arriving_cores": 582.0
+      },
+      "7": {
+        "tasks": 1,
+        "arriving_cores": 1.0
+      },
+      "8": {
+        "tasks": 7,
+        "arriving_cores": 829.0
+      },
+      "9": {
+        "tasks": 2,
+        "arriving_cores": 956.0
+      },
+      "12": {
+        "tasks": 33,
+        "arriving_cores": 131.0
+      },
+      "14": {
+        "tasks": 10,
+        "arriving_cores": 6196.0
+      },
+      "15": {
+        "tasks": 10,
+        "arriving_cores": 7303.0
+      },
+      "16": {
+        "tasks": 22,
+        "arriving_cores": 10732.0
+      },
+      "17": {
+        "tasks": 14,
+        "arriving_cores": 2092.0
+      },
+      "18": {
+        "tasks": 46,
+        "arriving_cores": 7522.0
+      },
+      "19": {
+        "tasks": 10,
+        "arriving_cores": 846.0
+      },
+      "20": {
+        "tasks": 104,
+        "arriving_cores": 44183.0
+      },
+      "21": {
+        "tasks": 74,
+        "arriving_cores": 9036.0
+      },
+      "22": {
+        "tasks": 149,
+        "arriving_cores": 27455.5
+      },
+      "23": {
+        "tasks": 2164,
+        "arriving_cores": 389310.3999999977
+      },
+      "24": {
+        "tasks": 81701,
+        "arriving_cores": 4740724.099999597
+      },
+      "25": {
+        "tasks": 77322,
+        "arriving_cores": 4400479.749999878
+      },
+      "26": {
+        "tasks": 64203,
+        "arriving_cores": 4012526.2999999137
+      },
+      "27": {
+        "tasks": 131398,
+        "arriving_cores": 6186060.849999564
+      },
+      "28": {
+        "tasks": 90121,
+        "arriving_cores": 6047250.349999595
+      },
+      "29": {
+        "tasks": 125912,
+        "arriving_cores": 10005779.399999714
+      },
+      "30": {
+        "tasks": 91432,
+        "arriving_cores": 5234825.749999688
+      },
+      "31": {
+        "tasks": 93490,
+        "arriving_cores": 6642553.599999629
+      },
+      "32": {
+        "tasks": 76439,
+        "arriving_cores": 4209241.999999903
+      },
+      "33": {
+        "tasks": 76870,
+        "arriving_cores": 5668248.74999974
+      },
+      "34": {
+        "tasks": 69158,
+        "arriving_cores": 8789078.59999965
+      },
+      "35": {
+        "tasks": 80313,
+        "arriving_cores": 8207051.799999678
+      },
+      "36": {
+        "tasks": 56070,
+        "arriving_cores": 5459059.0499998955
+      },
+      "37": {
+        "tasks": 56830,
+        "arriving_cores": 6028481.799999859
+      },
+      "38": {
+        "tasks": 73709,
+        "arriving_cores": 6601283.999999807
+      },
+      "39": {
+        "tasks": 65325,
+        "arriving_cores": 7341282.399999795
+      },
+      "40": {
+        "tasks": 75551,
+        "arriving_cores": 8961043.34999979
+      },
+      "41": {
+        "tasks": 93327,
+        "arriving_cores": 9613412.449999819
+      },
+      "42": {
+        "tasks": 92234,
+        "arriving_cores": 7542874.299999703
+      },
+      "43": {
+        "tasks": 96966,
+        "arriving_cores": 8517898.349999724
+      },
+      "44": {
+        "tasks": 75152,
+        "arriving_cores": 7447386.449999782
+      },
+      "45": {
+        "tasks": 77663,
+        "arriving_cores": 8072821.499999809
+      },
+      "46": {
+        "tasks": 52775,
+        "arriving_cores": 5830988.049999859
+      },
+      "47": {
+        "tasks": 47653,
+        "arriving_cores": 4801918.949999922
+      },
+      "48": {
+        "tasks": 97938,
+        "arriving_cores": 5838589.799999468
+      },
+      "49": {
+        "tasks": 68161,
+        "arriving_cores": 5134322.199999779
+      },
+      "50": {
+        "tasks": 66939,
+        "arriving_cores": 5632585.799999795
+      },
+      "51": {
+        "tasks": 126366,
+        "arriving_cores": 5094243.299999845
+      },
+      "52": {
+        "tasks": 88421,
+        "arriving_cores": 5952847.449999751
+      },
+      "53": {
+        "tasks": 120939,
+        "arriving_cores": 9494278.849999757
+      },
+      "54": {
+        "tasks": 107670,
+        "arriving_cores": 7184342.69999959
+      },
+      "55": {
+        "tasks": 99037,
+        "arriving_cores": 7098863.349999727
+      },
+      "56": {
+        "tasks": 80848,
+        "arriving_cores": 5946001.999999828
+      },
+      "57": {
+        "tasks": 88431,
+        "arriving_cores": 7344141.999999764
+      },
+      "58": {
+        "tasks": 77745,
+        "arriving_cores": 8722678.3999998
+      },
+      "59": {
+        "tasks": 73410,
+        "arriving_cores": 8410304.94999978
+      },
+      "60": {
+        "tasks": 66548,
+        "arriving_cores": 6818237.199999759
+      },
+      "61": {
+        "tasks": 68367,
+        "arriving_cores": 8038238.549999689
+      },
+      "62": {
+        "tasks": 78956,
+        "arriving_cores": 9416907.399999855
+      },
+      "63": {
+        "tasks": 76307,
+        "arriving_cores": 9852532.499999871
+      },
+      "64": {
+        "tasks": 78605,
+        "arriving_cores": 9953836.199999852
+      },
+      "65": {
+        "tasks": 86300,
+        "arriving_cores": 14365932.550000096
+      },
+      "66": {
+        "tasks": 77641,
+        "arriving_cores": 7415536.299999724
+      },
+      "67": {
+        "tasks": 86333,
+        "arriving_cores": 8090959.899999744
+      },
+      "68": {
+        "tasks": 92975,
+        "arriving_cores": 7845263.1499997815
+      },
+      "69": {
+        "tasks": 83151,
+        "arriving_cores": 8102741.299999766
+      },
+      "70": {
+        "tasks": 61620,
+        "arriving_cores": 6001549.999999833
+      },
+      "71": {
+        "tasks": 57124,
+        "arriving_cores": 6101031.699999838
+      },
+      "72": {
+        "tasks": 90318,
+        "arriving_cores": 4233965.449999857
+      },
+      "73": {
+        "tasks": 72836,
+        "arriving_cores": 4724034.199999826
+      },
+      "74": {
+        "tasks": 70730,
+        "arriving_cores": 4344037.89999992
+      },
+      "75": {
+        "tasks": 123528,
+        "arriving_cores": 5305872.399999777
+      },
+      "76": {
+        "tasks": 127429,
+        "arriving_cores": 4897429.149999841
+      },
+      "77": {
+        "tasks": 124128,
+        "arriving_cores": 7444601.749999662
+      },
+      "78": {
+        "tasks": 102715,
+        "arriving_cores": 6550084.849999651
+      },
+      "79": {
+        "tasks": 103738,
+        "arriving_cores": 5746746.89999977
+      },
+      "80": {
+        "tasks": 74235,
+        "arriving_cores": 5915911.849999784
+      },
+      "81": {
+        "tasks": 92360,
+        "arriving_cores": 7633478.449999715
+      },
+      "82": {
+        "tasks": 74744,
+        "arriving_cores": 8830616.349999802
+      },
+      "83": {
+        "tasks": 83863,
+        "arriving_cores": 11057862.899999933
+      },
+      "84": {
+        "tasks": 54360,
+        "arriving_cores": 5614579.149999796
+      },
+      "85": {
+        "tasks": 58221,
+        "arriving_cores": 8111504.499999759
+      },
+      "86": {
+        "tasks": 70945,
+        "arriving_cores": 8642410.899999727
+      },
+      "87": {
+        "tasks": 62090,
+        "arriving_cores": 7001545.799999808
+      },
+      "88": {
+        "tasks": 77640,
+        "arriving_cores": 7816838.8999984665
+      },
+      "89": {
+        "tasks": 79042,
+        "arriving_cores": 8253034.699999133
+      },
+      "90": {
+        "tasks": 68726,
+        "arriving_cores": 6002604.349999243
+      },
+      "91": {
+        "tasks": 67025,
+        "arriving_cores": 5485203.999999512
+      },
+      "92": {
+        "tasks": 74891,
+        "arriving_cores": 13794333.550000466
+      },
+      "93": {
+        "tasks": 90946,
+        "arriving_cores": 41403346.45000144
+      },
+      "94": {
+        "tasks": 69297,
+        "arriving_cores": 12393931.349999959
+      },
+      "95": {
+        "tasks": 68232,
+        "arriving_cores": 7130356.249998279
+      },
+      "96": {
+        "tasks": 98764,
+        "arriving_cores": 5184817.199999103
+      },
+      "97": {
+        "tasks": 70315,
+        "arriving_cores": 4766279.249999587
+      },
+      "98": {
+        "tasks": 68900,
+        "arriving_cores": 3833993.6999999317
+      },
+      "99": {
+        "tasks": 144724,
+        "arriving_cores": 7436984.049999232
+      },
+      "100": {
+        "tasks": 106678,
+        "arriving_cores": 8032682.2499989085
+      },
+      "101": {
+        "tasks": 128414,
+        "arriving_cores": 11122086.499999797
+      },
+      "102": {
+        "tasks": 104393,
+        "arriving_cores": 8990244.349998783
+      },
+      "103": {
+        "tasks": 143058,
+        "arriving_cores": 10031211.04999913
+      },
+      "104": {
+        "tasks": 102566,
+        "arriving_cores": 8657671.199998721
+      },
+      "105": {
+        "tasks": 87389,
+        "arriving_cores": 7537528.5999987675
+      },
+      "106": {
+        "tasks": 60553,
+        "arriving_cores": 4770668.549999473
+      },
+      "107": {
+        "tasks": 53252,
+        "arriving_cores": 4223239.499999736
+      },
+      "108": {
+        "tasks": 60230,
+        "arriving_cores": 12885177.250000237
+      },
+      "109": {
+        "tasks": 64946,
+        "arriving_cores": 14809296.100000592
+      },
+      "110": {
+        "tasks": 71884,
+        "arriving_cores": 14512392.750000698
+      },
+      "111": {
+        "tasks": 69025,
+        "arriving_cores": 10787117.199999701
+      },
+      "112": {
+        "tasks": 59447,
+        "arriving_cores": 6213722.849999463
+      },
+      "113": {
+        "tasks": 55870,
+        "arriving_cores": 3676631.8499998995
+      },
+      "114": {
+        "tasks": 50344,
+        "arriving_cores": 2911699.350000014
+      },
+      "115": {
+        "tasks": 131111,
+        "arriving_cores": 3785686.099999885
+      },
+      "116": {
+        "tasks": 182753,
+        "arriving_cores": 3289484.649999954
+      },
+      "117": {
+        "tasks": 69826,
+        "arriving_cores": 3445865.59999992
+      },
+      "118": {
+        "tasks": 66745,
+        "arriving_cores": 5125131.399999398
+      },
+      "119": {
+        "tasks": 59053,
+        "arriving_cores": 4730648.59999972
+      },
+      "120": {
+        "tasks": 101342,
+        "arriving_cores": 3919861.499999811
+      },
+      "121": {
+        "tasks": 76345,
+        "arriving_cores": 5492566.949999248
+      },
+      "122": {
+        "tasks": 77120,
+        "arriving_cores": 4804733.549999673
+      },
+      "123": {
+        "tasks": 136191,
+        "arriving_cores": 6560525.449999439
+      },
+      "124": {
+        "tasks": 101785,
+        "arriving_cores": 7009344.749998974
+      },
+      "125": {
+        "tasks": 134587,
+        "arriving_cores": 8838263.549998902
+      },
+      "126": {
+        "tasks": 105848,
+        "arriving_cores": 7518111.449998844
+      },
+      "127": {
+        "tasks": 106488,
+        "arriving_cores": 6817836.149998987
+      },
+      "128": {
+        "tasks": 77446,
+        "arriving_cores": 5031176.249999456
+      },
+      "129": {
+        "tasks": 77203,
+        "arriving_cores": 5163784.609999221
+      },
+      "130": {
+        "tasks": 55891,
+        "arriving_cores": 3785845.14999981
+      },
+      "131": {
+        "tasks": 50495,
+        "arriving_cores": 2848246.1999999946
+      },
+      "132": {
+        "tasks": 46056,
+        "arriving_cores": 2590330.1000000597
+      },
+      "133": {
+        "tasks": 42593,
+        "arriving_cores": 2428997.450000087
+      },
+      "134": {
+        "tasks": 44631,
+        "arriving_cores": 2480771.7500000894
+      },
+      "135": {
+        "tasks": 50413,
+        "arriving_cores": 3726510.3499999824
+      },
+      "136": {
+        "tasks": 48706,
+        "arriving_cores": 3453060.249999967
+      },
+      "137": {
+        "tasks": 90479,
+        "arriving_cores": 3610542.199999898
+      },
+      "138": {
+        "tasks": 77675,
+        "arriving_cores": 3325682.8999999776
+      },
+      "139": {
+        "tasks": 75307,
+        "arriving_cores": 4190662.299999842
+      },
+      "140": {
+        "tasks": 68887,
+        "arriving_cores": 2942157.999999999
+      },
+      "141": {
+        "tasks": 85587,
+        "arriving_cores": 6411230.09999906
+      },
+      "142": {
+        "tasks": 73106,
+        "arriving_cores": 4777359.749999421
+      },
+      "143": {
+        "tasks": 57374,
+        "arriving_cores": 4612080.049999556
+      },
+      "144": {
+        "tasks": 82733,
+        "arriving_cores": 4851242.249999343
+      },
+      "145": {
+        "tasks": 83451,
+        "arriving_cores": 7210214.599998673
+      },
+      "146": {
+        "tasks": 77000,
+        "arriving_cores": 5897215.499999016
+      },
+      "147": {
+        "tasks": 143216,
+        "arriving_cores": 7868229.099999107
+      },
+      "148": {
+        "tasks": 105689,
+        "arriving_cores": 6870020.149998871
+      },
+      "149": {
+        "tasks": 131005,
+        "arriving_cores": 9742883.24999936
+      },
+      "150": {
+        "tasks": 101302,
+        "arriving_cores": 6765783.849998782
+      },
+      "151": {
+        "tasks": 103059,
+        "arriving_cores": 6481162.799999049
+      },
+      "152": {
+        "tasks": 86079,
+        "arriving_cores": 5562804.949999352
+      },
+      "153": {
+        "tasks": 93060,
+        "arriving_cores": 7758371.749999057
+      },
+      "154": {
+        "tasks": 73698,
+        "arriving_cores": 8880417.59999943
+      },
+      "155": {
+        "tasks": 74921,
+        "arriving_cores": 9277325.699999303
+      },
+      "156": {
+        "tasks": 62788,
+        "arriving_cores": 11758564.799999844
+      },
+      "157": {
+        "tasks": 62586,
+        "arriving_cores": 6362990.049999258
+      },
+      "158": {
+        "tasks": 75115,
+        "arriving_cores": 7937992.79999897
+      },
+      "159": {
+        "tasks": 79648,
+        "arriving_cores": 8925205.699999342
+      },
+      "160": {
+        "tasks": 81569,
+        "arriving_cores": 8790048.499999195
+      },
+      "161": {
+        "tasks": 95836,
+        "arriving_cores": 11184675.849999778
+      },
+      "162": {
+        "tasks": 74811,
+        "arriving_cores": 7440115.749999104
+      },
+      "163": {
+        "tasks": 77880,
+        "arriving_cores": 6690947.649999223
+      },
+      "164": {
+        "tasks": 92472,
+        "arriving_cores": 7082856.299998776
+      },
+      "165": {
+        "tasks": 93176,
+        "arriving_cores": 6813902.999998975
+      },
+      "166": {
+        "tasks": 67875,
+        "arriving_cores": 5854826.799999124
+      },
+      "167": {
+        "tasks": 69079,
+        "arriving_cores": 4953352.649999468
+      },
+      "168": {
+        "tasks": 84187,
+        "arriving_cores": 4624493.799999347
+      },
+      "169": {
+        "tasks": 80944,
+        "arriving_cores": 6960628.1499984795
+      },
+      "170": {
+        "tasks": 77328,
+        "arriving_cores": 5901447.0499992585
+      },
+      "171": {
+        "tasks": 145364,
+        "arriving_cores": 8079205.699998929
+      },
+      "172": {
+        "tasks": 105123,
+        "arriving_cores": 8115862.499999016
+      },
+      "173": {
+        "tasks": 128836,
+        "arriving_cores": 11494411.099999873
+      },
+      "174": {
+        "tasks": 98095,
+        "arriving_cores": 7224179.149998956
+      },
+      "175": {
+        "tasks": 101373,
+        "arriving_cores": 7751845.599999017
+      },
+      "176": {
+        "tasks": 73428,
+        "arriving_cores": 5265757.949999485
+      },
+      "177": {
+        "tasks": 86699,
+        "arriving_cores": 7118916.599999111
+      },
+      "178": {
+        "tasks": 78780,
+        "arriving_cores": 8360879.449998882
+      },
+      "179": {
+        "tasks": 83381,
+        "arriving_cores": 7253595.149999283
+      },
+      "180": {
+        "tasks": 69246,
+        "arriving_cores": 5326851.399999532
+      },
+      "181": {
+        "tasks": 83511,
+        "arriving_cores": 5346000.3999993475
+      },
+      "182": {
+        "tasks": 83945,
+        "arriving_cores": 8086283.699998855
+      },
+      "183": {
+        "tasks": 86262,
+        "arriving_cores": 7510972.2999985805
+      },
+      "184": {
+        "tasks": 72169,
+        "arriving_cores": 7968438.2499988545
+      },
+      "185": {
+        "tasks": 121444,
+        "arriving_cores": 10244850.499999445
+      },
+      "186": {
+        "tasks": 116111,
+        "arriving_cores": 9681977.399999142
+      },
+      "187": {
+        "tasks": 112713,
+        "arriving_cores": 10157706.699999502
+      },
+      "188": {
+        "tasks": 103840,
+        "arriving_cores": 9601766.899999121
+      },
+      "189": {
+        "tasks": 104437,
+        "arriving_cores": 7297485.249998735
+      },
+      "190": {
+        "tasks": 108373,
+        "arriving_cores": 6901732.899998771
+      },
+      "191": {
+        "tasks": 89578,
+        "arriving_cores": 6259682.909999285
+      },
+      "192": {
+        "tasks": 435,
+        "arriving_cores": 115437.55
+      },
+      "193": {
+        "tasks": 3,
+        "arriving_cores": 173.0
+      },
+      "194": {
+        "tasks": 3,
+        "arriving_cores": 115.0
+      },
+      "195": {
+        "tasks": 1,
+        "arriving_cores": 1.0
+      },
+      "196": {
+        "tasks": 1,
+        "arriving_cores": 5.0
+      },
+      "197": {
+        "tasks": 1,
+        "arriving_cores": 35.0
+      },
+      "198": {
+        "tasks": 1,
+        "arriving_cores": 34.0
+      },
+      "199": {
+        "tasks": 1,
+        "arriving_cores": 33.0
+      },
+      "200": {
+        "tasks": 2,
+        "arriving_cores": 66.0
+      },
+      "201": {
+        "tasks": 1,
+        "arriving_cores": 373.0
+      },
+      "210": {
+        "tasks": 1,
+        "arriving_cores": 1.0
+      },
+      "212": {
+        "tasks": 1,
+        "arriving_cores": 278.0
+      }
+    },
+    "deferrable_core_seconds": 355592633547.8233
+  },
+  "online_static": {
+    "distinct_containers": 71476,
+    "distinct_machines_in_container_meta": 4005,
+    "distinct_machines_in_machine_meta": 4034,
+    "total_machine_cores": 387264,
+    "online_reserved_cores": 362072.0,
+    "online_limit_cores": 374971.4,
+    "online_static_reservation_ratio": 0.9349487687985457
+  },
+  "deferrable_share_proxy": {
+    "deferrable_core_seconds": 355592633547.8233,
+    "online_core_seconds": 250264166400.0,
+    "deferrable_share": 0.5869252166162815
+  }
+}
