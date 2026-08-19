@@ -9,11 +9,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from experiments.alibaba2018_dro.energy import (
+from alibaba2018_dro.energy import (
     sha256_file,
     write_study_inputs,
 )
-from experiments.alibaba2018_dro.eia_history import (
+from alibaba2018_dro.eia_history import (
     build_december_context,
     load_erco_history,
     load_houston_dam_prices,
@@ -79,7 +79,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=ENERGY_DIRECTORY / "eia_930_erco_full_history.xlsx",
         help=(
-            "Ignored EIA-930 workbook used to construct causal ERCO forecasts."
+            "Ignored EIA-930 workbook used to construct leakage-free ERCO forecasts."
         ),
     )
     parser.add_argument(
@@ -98,7 +98,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--output-dir",
         type=Path,
         default=DEFAULT_OUTPUT_DIRECTORY,
-        help="Version-controlled compact paper input directory.",
+        help="Version-controlled compact energy input directory.",
     )
     return parser.parse_args(argv)
 

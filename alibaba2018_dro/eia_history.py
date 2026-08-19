@@ -225,7 +225,7 @@ def load_houston_dam_prices(
 
 
 def load_erco_history(path: Path) -> list[dict[str, object]]:
-    """Load all ERCO observations for causal forecast construction."""
+    """Load all ERCO observations for leakage-free forecast construction."""
 
     rows: list[dict[str, object]] = []
     for source_row in iter_xlsx_rows(

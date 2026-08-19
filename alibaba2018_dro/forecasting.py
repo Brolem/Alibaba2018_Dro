@@ -1,4 +1,4 @@
-"""Causal, researcher-constructed ERCO signal forecasts for the paper study."""
+"""Leakage-free, researcher-constructed ERCO signal forecasts."""
 
 from __future__ import annotations
 
@@ -207,7 +207,7 @@ def _training_data(
         candidate_date -= dt.timedelta(days=1)
     if len(rows) < FORECAST_BASELINE_DAYS:
         raise ValueError(
-            f"insufficient causal history for {column}: {len(rows)} daily samples"
+            f"insufficient lookback history for {column}: {len(rows)} daily samples"
         )
     prediction_feature = _feature_vector(
         values_by_timestamp,

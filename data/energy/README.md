@@ -15,7 +15,7 @@ EIA 工作簿的 `Published Hourly Data` 表含 `UTC time`、`Local date`、`Loc
 
 ## 共享年度表：ERCOT 2025 Houston
 
-`ercot_2025_houston_hourly.csv` 是论文线与求职线共用的 2025 年小时能源表，由下列命令生成：
+`ercot_2025_houston_hourly.csv` 是本项目共用的 2025 年小时能源表，由下列命令生成：
 
 ```powershell
 conda run -n scip_env python scripts/prepare_ercot_2025_houston_energy.py

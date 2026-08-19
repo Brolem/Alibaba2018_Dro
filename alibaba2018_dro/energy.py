@@ -118,7 +118,7 @@ def _forecast_by_target(
                 f"{_timestamp_text(cutoff)} != {expected_cutoff}"
             )
         if row.get("forecast_method") != FORECAST_METHOD:
-            raise ValueError("forecast method does not match the registered causal model")
+            raise ValueError("forecast method does not match the registered no-lookahead model")
         target_text = _timestamp_text(target)
         if target_text in selected:
             raise ValueError(f"duplicate forecast target: {target_text}")
@@ -242,7 +242,7 @@ def build_study_window_rows(
             )
         )
     if tuple(result[0]) != ENERGY_INPUT_COLUMNS:
-        raise AssertionError("paper input rows do not match the formal schema")
+        raise AssertionError("energy input rows do not match the formal schema")
     return result
 
 
@@ -322,7 +322,7 @@ def write_study_inputs(
     source_hashes: Mapping[str, str],
     forecast_provider: ForecastProvider = forecast_delivery_day,
 ) -> dict[str, object]:
-    """Write four fixed inputs with causal forecasts for core and tail only."""
+    """Write four fixed inputs with leakage-free forecasts for core and tail only."""
 
     validation = validate_ridge_2024(eia_history)
     ridge_alphas = {

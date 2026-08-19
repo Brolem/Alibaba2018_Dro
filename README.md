@@ -25,7 +25,7 @@
 
 ## 3. 创新点（四个细节）
 
-1. **从 trace 标定可延迟窗口（不拍脑袋设 deadline）**：用 `task_type`/优先级与观测到的起止/调度延迟，反推每类批处理作业的 release/deadline 与可延迟量，而非假设固定 slack。
+1. **从 trace 标定可延迟窗口（不拍脑袋设 deadline）**：用 `task_type`、`task_name` 的 DAG 依赖与观测到的起止时间，反推每类批处理作业的 release/deadline 与可延迟量，而非假设固定 slack。
 2. **双侧不确定**：把“作业到达率、执行时长、可延迟窗口”与“可再生出力/碳强度”一起纳入同一个 DRO/机会约束，区别于文献里只做单侧（能源）不确定。
 3. **无泄漏 + 样本外标定**：模糊集/Γ 预算只用 2024 残差标定，2025 四窗口做纯样本外评估；日前决策只读 48h 保护前数据，实际风光/碳只用于事后评价；并量化 in-sample 标定会高估多少收益。
 4. **能量回弹 + 服务器 base/idle 功率**：延迟批处理不是凭空消失，须满足能量守恒（回弹）；建模服务器空闲/基座功率，只有延迟后能关停空闲机才真正降功率。
@@ -115,7 +115,7 @@
 
 ## 11. 未决事项（待确认）
 
-1. 统计 `batch_task`（12 类 `task_type`）的可延迟能量占比与 `task_name` 的 DAG 依赖结构，确定柔性包络。
+1. 已确认：`task_type` 为 12 类、`task_name` 承载 DAG；可延迟能量占比静态代理约 59%。真实 deadline slack 仍需 `batch_instance` 标定。
 2. 确定本地 PV 用 NSRDB/PVWatts 2025 重拉（原 2020 剖面已移除）。
 3. 确定 DRO 具体形式（预算 RO / 机会约束 DRO / Wasserstein DRO）与求解器。
 4. 确定投稿目标（英文低分区 or 中文 EI），据此决定能源侧是否换成国内电网数据。
@@ -123,35 +123,34 @@
 ## 12. 本包内容清单
 
 ```text
-alibaba2018_dro_bundle/
-├── README.md                          # 本文档
-├── docs/
-│   └── 因果预测设计.md                  # 48h 保护因果预测设计
-├── experiments/alibaba2018_dro/
+alibaba2018_dro/
+├── README.md
+├── alibaba2018_dro/
 │   ├── __init__.py
-│   ├── config.py                       # 窗口/预测常量
-│   ├── eia_history.py                  # 读 EIA XLSX（标准库，无依赖）
-│   ├── energy.py                       # ERCOT/EIA 输入构造
-│   └── forecasting.py                  # 48h 保护 Ridge 预测器
+│   ├── config.py             # 窗口/预测常量
+│   ├── eia_history.py        # EIA XLSX 读取（标准库）
+│   ├── energy.py             # ERCOT/EIA 输入构造
+│   └── forecasting.py        # 48h 保护 Ridge 预测器
+├── docs/forecasting.md       # 无泄漏时序预测设计
 ├── scripts/
-│   ├── prepare_alibaba2018_dro_inputs.py            # 能源输入物化脚本
-│   ├── analyze_v2018_workload.py                    # workload 流式统计
-│   └── build_compute_uncertainty_envelope.py        # 算力侧不确定集与柔性包络
-├── tests/alibaba2018_dro/test_inputs.py             # 输入合同测试
+│   ├── analyze_workload.py            # workload 流式统计
+│   ├── build_uncertainty_envelope.py  # 算力侧不确定集与柔性包络
+│   └── prepare_energy_inputs.py       # 能源输入物化脚本
+├── tests/test_energy_inputs.py        # 能源输入合同测试
 └── data/
     ├── energy/
-    │   ├── ercot_2025_houston_hourly.csv          # 2025 DAM 价 + EIA 风光/碳
-    │   ├── eia_930_erco_full_history.xlsx         # EIA 全历史（预测/残差用，gitignore）
-    │   ├── windows/                               # 4 个 1062h 窗口输入 + manifest
-    │   └── README.md                              # 数据来源与哈希
+    │   ├── ercot_2025_houston_hourly.csv
+    │   ├── eia_930_erco_full_history.xlsx   # gitignore
+    │   ├── windows/                        # 4 个 1062h 窗口 + manifest
+    │   └── README.md
     └── workload/
-        ├── README.md                              # Alibaba v2018 下载与字段说明
+        ├── README.md
         ├── machine_meta.csv / container_meta.csv / batch_task.csv
         └── workload_stats.json / compute_uncertainty.json / hourly_flexibility_envelope.csv
 ```
 
 ## 13. 启动提示
 
-- 代码包名已统一为 `alibaba2018_dro`，可直接 `import experiments.alibaba2018_dro.forecasting`。
-- 算力侧 Alibaba v2018 已下载并校验（`machine_meta` / `container_meta` / `batch_task`；`batch_task.csv` 较大，已 gitignore）。
-- `test_inputs.py` 在本环境依赖的 XLSX 读取库可能需要先安装 `openpyxl`（或改用包内标准库 `eia_history.iter_xlsx_rows`）后再跑。
+- 主包名 `alibaba2018_dro`，直接 `import alibaba2018_dro.forecasting`；脚本 `scripts/prepare_energy_inputs.py` 会把项目根加入 `sys.path`。
+- Alibaba v2018 三表已下载校验；`batch_task.csv`（约 802 MB）与原始 `.tar.gz` 已 gitignore。
+- 能源输入测试：`python -m unittest tests.test_energy_inputs`。除一个过时的“12 月风光回填”断言外均通过；该断言与“缺值不插补”的设计矛盾，留待统一修正。

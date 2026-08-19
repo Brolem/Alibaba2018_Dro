@@ -15,7 +15,7 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 try:
-    from experiments.alibaba2018_dro.energy import (
+    from alibaba2018_dro.energy import (
         build_study_window_rows,
         day_ahead_cutoff_utc,
         to_energy_interval,
@@ -26,12 +26,12 @@ except ImportError:
     to_energy_interval = None
 
 try:
-    from experiments.alibaba2018_dro.energy import write_study_inputs
+    from alibaba2018_dro.energy import write_study_inputs
 except ImportError:
     write_study_inputs = None
 
 try:
-    from experiments.alibaba2018_dro.forecasting import (
+    from alibaba2018_dro.forecasting import (
         forecast_delivery_day,
         validate_ridge_2024,
     )
@@ -40,7 +40,7 @@ except ImportError:
     validate_ridge_2024 = None
 
 try:
-    from experiments.alibaba2018_dro.eia_history import (
+    from alibaba2018_dro.eia_history import (
         build_december_context,
         load_erco_history,
         load_houston_dam_prices,
@@ -107,7 +107,7 @@ def synthetic_history_rows() -> list[dict[str, object]]:
     return rows
 
 
-def synthetic_causal_forecaster(
+def synthetic_forecaster(
     _history: list[dict[str, object]],
     *,
     cutoff_utc: str,
@@ -144,11 +144,11 @@ def _require_implementation(
     implementation: Callable[..., object] | None,
 ) -> Callable[..., object]:
     if implementation is None:
-        raise AssertionError("paper input implementation is unavailable")
+        raise AssertionError("energy input implementation is unavailable")
     return implementation
 
 
-class PaperInputTests(unittest.TestCase):
+class EnergyInputTests(unittest.TestCase):
     def test_loads_only_requested_year_houston_dam_prices(self) -> None:
         loader = _require_implementation(load_houston_dam_prices)
         source_rows = [
@@ -169,11 +169,11 @@ class PaperInputTests(unittest.TestCase):
         ]
         with (
             patch(
-                "experiments.alibaba2018_dro.eia_history._xlsx_payload_from_archive",
+                "alibaba2018_dro.eia_history._xlsx_payload_from_archive",
                 return_value=BytesIO(b"xlsx"),
             ),
             patch(
-                "experiments.alibaba2018_dro.eia_history.iter_xlsx_rows",
+                "alibaba2018_dro.eia_history.iter_xlsx_rows",
                 side_effect=[iter(())] * 11 + [iter(source_rows)],
             ),
         ):
@@ -237,7 +237,7 @@ class PaperInputTests(unittest.TestCase):
             },
         ]
         with patch(
-            "experiments.alibaba2018_dro.eia_history.iter_xlsx_rows",
+            "alibaba2018_dro.eia_history.iter_xlsx_rows",
             return_value=iter(source_rows),
         ):
             rows = loader(Path("unused.xlsx"))
@@ -323,7 +323,7 @@ class PaperInputTests(unittest.TestCase):
     def test_shared_annual_table_backfills_only_the_missing_december_renewables(
         self,
     ) -> None:
-        project_root = Path(__file__).parents[2]
+        project_root = Path(__file__).parents[1]
         annual_table = project_root / "data" / "energy" / "ercot_2025_houston_hourly.csv"
         with annual_table.open("r", encoding="utf-8", newline="") as input_file:
             rows = list(csv.DictReader(input_file))
@@ -383,7 +383,7 @@ class PaperInputTests(unittest.TestCase):
             sum(row["period_role"] == "settlement_tail" for row in rows), 171
         )
 
-    def test_materializes_four_hashed_paper_inputs(self) -> None:
+    def test_materializes_four_hashed_energy_inputs(self) -> None:
         writer = _require_implementation(write_study_inputs)
         with tempfile.TemporaryDirectory() as temporary_directory:
             output_directory = Path(temporary_directory)
@@ -393,7 +393,7 @@ class PaperInputTests(unittest.TestCase):
                 eia_history=synthetic_history_rows(),
                 output_directory=output_directory,
                 source_hashes={"eia_930_erco": "A" * 64},
-                forecast_provider=synthetic_causal_forecaster,
+                forecast_provider=synthetic_forecaster,
             )
 
             expected_files = {
@@ -443,11 +443,11 @@ class PaperInputTests(unittest.TestCase):
             self.assertNotIn(str(output_directory), json.dumps(manifest_payload))
 
     def test_preparation_script_exposes_explicit_raw_source_arguments(self) -> None:
-        project_root = Path(__file__).parents[2]
+        project_root = Path(__file__).parents[1]
         completed = subprocess.run(
             [
                 sys.executable,
-                str(project_root / "scripts" / "prepare_alibaba2018_dro_inputs.py"),
+                str(project_root / "scripts" / "prepare_energy_inputs.py"),
                 "--help",
             ],
             check=False,
