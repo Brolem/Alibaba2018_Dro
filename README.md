@@ -35,8 +35,9 @@
 ### 4.1 算力侧：Alibaba cluster-trace-v2018
 
 - 文件：`batch_task.csv`、`container_meta.csv`、`machine_meta.csv`（可选 `batch_instance.csv`）。
-- 关键字段：`task_type`（batch vs service）、`task_name`（含 DAG 信息）、`inst_num`、`start_time`/`end_time`、`plan_cpu`/`plan_mem`、`job_name`、`status`。
-- 用途：`task_type=batch` 挑出可延迟作业；`start_time/end_time` 反推 release/deadline；DAG 用于工作流级依赖；到达/时长用于双侧不确定分布。
+- 划分：**批处理（可延迟）** 来自 `batch_task`/`batch_instance`；**在线服务（LRA，必须满足）** 来自 `container_meta`/`container_usage`。划分按“表”，不是某个 `task_type` 标志。
+- 关键字段：`batch_task` 的 `task_name`（含 DAG 信息）、`instance_num`、`job_name`、`task_type`（1–12 类任务类型）、`status`、`start_time`/`end_time`、`plan_cpu`/`plan_mem`。
+- 用途：用 `start_time/end_time` 反推 release/deadline；用 `task_name` 的 `M/R+数字` 结构重建 DAG；到达/时长用于双侧不确定分布。
 
 ### 4.2 能源/碳侧（本包已含）
 
@@ -59,14 +60,14 @@
 
 ## 5. 数据契约与字段映射
 
-| v2018 表 | 关键字段 | 派生到模型 |
+| v2018 表 | 关键字段（真实 schema，CSV 无表头） | 派生到模型 |
 | --- | --- | --- |
-| `batch_task.csv` | `task_name`, `inst_num`, `start_time`, `end_time`, `plan_cpu/plan_mem`, `task_type`, `job_name` | 作业 release/deadline、资源需求、DAG 依赖 |
-| `container_meta.csv` | `task_type`(batch/service), `job_name`, `task_name`, `status` | 在线 vs 批处理划分、可延迟标记 |
-| `machine_meta.csv` | `machine_id`, `capacity_cpu`, `capacity_memory` | 服务器容量 |
-| 能源表 | `dam_lz_houston_usd_per_mwh`, `erco_consumed_co2_intensity_lbs_per_kwh`, PV 剖面 | 电价、碳强度、本地 PV 出力 |
+| `batch_task.csv` | `task_name`, `instance_num`, `job_name`, `task_type`, `status`, `start_time`, `end_time`, `plan_cpu`, `plan_mem` | 可延迟批处理作业：release/deadline、资源需求、DAG 依赖 |
+| `container_meta.csv` | `container_id`, `machine_id`, `time_stamp`, `app_du`, `status`, `cpu_request`, `cpu_limit`, `mem_size` | 在线服务（LRA）负载：必须满足的 CPU/内存请求 |
+| `machine_meta.csv` | `machine_id`, `time_stamp`, `failure_domain_1`, `failure_domain_2`, `cpu_num`, `mem_size`, `status` | 服务器容量（`cpu_num`、归一化 `mem_size`） |
+| 能源表 | `dam_lz_houston_usd_per_mwh`, `erco_solar_generation_mwh`, `erco_wind_generation_mwh`, `erco_consumed_co2_intensity_lbs_per_kwh` | 电价、系统风光、碳强度（本地 PV 待 2025 重拉） |
 
-柔性包络生成：对每个可延迟批处理作业，由 `start_time/end_time` 得到观测执行区间，反推 deadline（如 `end_time` 或 `start_time + 观测时长 + 标定 slack`），汇总为每小时的“可调度功率上/下界”。
+柔性包络生成：以 `batch_task`（或 `batch_instance`）为可延迟作业集合，由 `start_time/end_time` 得到观测执行区间，反推 deadline（如 `end_time` 或 `start_time + 观测时长 + 标定 slack`），汇总为每小时的“可调度功率上/下界”。`container_meta` 的在线负载不参与延迟。
 
 ## 6. 方法（模型）
 
@@ -114,7 +115,7 @@
 
 ## 11. 未决事项（待确认）
 
-1. 下载 v2018 后确认 `task_type=batch` 的实际可延迟份额与 DAG 结构。
+1. 统计 `batch_task`（12 类 `task_type`）的可延迟能量占比与 `task_name` 的 DAG 依赖结构，确定柔性包络。
 2. 确定本地 PV 用 NSRDB/PVWatts 2025 重拉（原 2020 剖面已移除）。
 3. 确定 DRO 具体形式（预算 RO / 机会约束 DRO / Wasserstein DRO）与求解器。
 4. 确定投稿目标（英文低分区 or 中文 EI），据此决定能源侧是否换成国内电网数据。
