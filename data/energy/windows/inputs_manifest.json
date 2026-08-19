@@ -57,7 +57,7 @@
     },
     "validation_year": 2024
   },
-  "max_spot_duration_hours": 168,
+  "max_batch_duration_hours": 168,
   "missing_value_counts": {
     "dam_lz_houston_usd_per_mwh": 0,
     "erco_consumed_co2_intensity_lbs_per_kwh": 0,

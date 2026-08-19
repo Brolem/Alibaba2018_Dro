@@ -42,4 +42,4 @@ conda run -n scip_env python scripts/prepare_ercot_2025_houston_energy.py
 - `erco_consumed_co2_intensity_lbs_per_kwh`：72 小时，`2025-12-03T07:00:00Z` 至 `2025-12-06T06:00:00Z`；
 - `erco_solar_generation_mwh`、`erco_wind_generation_mwh`：各 48 小时，`2025-12-04T07:00:00Z` 至 `2025-12-06T06:00:00Z`。
 
-脚本只使用标准库读取 XLSX 容器，并在生成前校验两个原始文件的 SHA-256。论文窗口的快照及其输入哈希清单写入 `outputs/paper/ercot_2025_houston_spot_gpu/day_ahead/inputs/`；这些快照不是求职线的输入数据。
+脚本只使用标准库读取 XLSX 容器，并在生成前校验两个原始文件的 SHA-256。论文窗口的快照及其输入哈希清单写入 `outputs/paper/alibaba2018_dro/day_ahead/inputs/`；这些快照不是求职线的输入数据。

@@ -15,7 +15,7 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 try:
-    from experiments.paper.ercot_2025_spot_gpu.energy import (
+    from experiments.paper.alibaba2018_dro.energy import (
         build_study_window_rows,
         day_ahead_cutoff_utc,
         to_energy_interval,
@@ -26,12 +26,12 @@ except ImportError:
     to_energy_interval = None
 
 try:
-    from experiments.paper.ercot_2025_spot_gpu.energy import write_study_inputs
+    from experiments.paper.alibaba2018_dro.energy import write_study_inputs
 except ImportError:
     write_study_inputs = None
 
 try:
-    from experiments.paper.ercot_2025_spot_gpu.forecasting import (
+    from experiments.paper.alibaba2018_dro.forecasting import (
         forecast_delivery_day,
         validate_ridge_2024,
     )
@@ -40,7 +40,7 @@ except ImportError:
     validate_ridge_2024 = None
 
 try:
-    from experiments.paper.ercot_2025_spot_gpu.eia_history import (
+    from experiments.paper.alibaba2018_dro.eia_history import (
         build_december_context,
         load_erco_history,
         load_houston_dam_prices,
@@ -169,11 +169,11 @@ class PaperInputTests(unittest.TestCase):
         ]
         with (
             patch(
-                "experiments.paper.ercot_2025_spot_gpu.eia_history._xlsx_payload_from_archive",
+                "experiments.paper.alibaba2018_dro.eia_history._xlsx_payload_from_archive",
                 return_value=BytesIO(b"xlsx"),
             ),
             patch(
-                "experiments.paper.ercot_2025_spot_gpu.eia_history.iter_xlsx_rows",
+                "experiments.paper.alibaba2018_dro.eia_history.iter_xlsx_rows",
                 side_effect=[iter(())] * 11 + [iter(source_rows)],
             ),
         ):
@@ -237,7 +237,7 @@ class PaperInputTests(unittest.TestCase):
             },
         ]
         with patch(
-            "experiments.paper.ercot_2025_spot_gpu.eia_history.iter_xlsx_rows",
+            "experiments.paper.alibaba2018_dro.eia_history.iter_xlsx_rows",
             return_value=iter(source_rows),
         ):
             rows = loader(Path("unused.xlsx"))
@@ -447,7 +447,7 @@ class PaperInputTests(unittest.TestCase):
         completed = subprocess.run(
             [
                 sys.executable,
-                str(project_root / "scripts" / "prepare_paper_ercot_2025_spot_gpu_inputs.py"),
+                str(project_root / "scripts" / "prepare_alibaba2018_dro_inputs.py"),
                 "--help",
             ],
             check=False,

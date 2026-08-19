@@ -4,6 +4,7 @@ import csv
 import datetime as dt
 import hashlib
 import json
+from dataclasses import dataclass
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -16,12 +17,11 @@ from .config import (
     FORECAST_HISTORY_DAYS,
     FORECAST_INFORMATION_PROTECTION_HOURS,
     FORECAST_METHOD,
-    MAX_SPOT_DURATION_HOURS,
+    MAX_BATCH_DURATION_HOURS,
     PAPER_WINDOW_STARTS,
     TAIL_HOURS,
 )
 from .forecasting import forecast_delivery_day, validate_ridge_2024
-from .types import EnergyInterval
 
 
 _TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
@@ -40,6 +40,14 @@ _FORECAST_COLUMNS = (
 )
 _CENTRAL = ZoneInfo("America/Chicago")
 ForecastProvider = Callable[..., Sequence[Mapping[str, object]]]
+
+
+@dataclass(frozen=True)
+class EnergyInterval:
+    """One hourly energy interval expressed by its UTC start and end instants."""
+
+    interval_start_utc: str
+    interval_end_utc: str
 
 
 def _timestamp(value: object, *, label: str) -> dt.datetime:
@@ -120,7 +128,7 @@ def _forecast_by_target(
 
 def _window_id(window_start: dt.date) -> str:
     return (
-        f"{window_start.isoformat()}_30d_d{MAX_SPOT_DURATION_HOURS}"
+        f"{window_start.isoformat()}_30d_d{MAX_BATCH_DURATION_HOURS}"
         f"_h{COMPLETION_SLACK_HOURS}"
     )
 
@@ -324,7 +332,7 @@ def write_study_inputs(
     materialized_rows: dict[str, list[dict[str, object]]] = {}
     for window_start in PAPER_WINDOW_STARTS:
         filename = (
-            f"{window_start.isoformat()}_30d_d{MAX_SPOT_DURATION_HOURS}"
+            f"{window_start.isoformat()}_30d_d{MAX_BATCH_DURATION_HOURS}"
             f"_h{COMPLETION_SLACK_HOURS}_energy.csv"
         )
         unforecasted_rows = build_study_window_rows(
@@ -367,7 +375,7 @@ def write_study_inputs(
             "core": CORE_HOURS,
             "settlement_tail": TAIL_HOURS,
         },
-        "max_spot_duration_hours": MAX_SPOT_DURATION_HOURS,
+        "max_batch_duration_hours": MAX_BATCH_DURATION_HOURS,
         "completion_slack_hours": COMPLETION_SLACK_HOURS,
         "forecast": {
             "method": FORECAST_METHOD,
