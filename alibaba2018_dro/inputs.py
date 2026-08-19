@@ -7,15 +7,11 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import IDLE_WATTS_PER_MACHINE, N_MACHINES, PUE, WATTS_PER_CORE
+from .config import N_MACHINES, POWER_SCENARIOS
 
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data"
-
-POWER_PER_CORE_MW = PUE * WATTS_PER_CORE / 1e6
-BASE_MW = PUE * N_MACHINES * IDLE_WATTS_PER_MACHINE / 1e6
-
 
 @dataclass(frozen=True)
 class HourlyInput:
@@ -62,8 +58,20 @@ def build_hourly_input(
     stats_json: Path,
     *,
     core_days: int = 30,
+    scenario: str = "base",
 ) -> list[HourlyInput]:
     """Align one energy window's core days with the workload envelope (MW)."""
+
+    if scenario not in POWER_SCENARIOS:
+        raise ValueError(f"unknown power scenario: {scenario}")
+    power = POWER_SCENARIOS[scenario]
+    power_per_core_mw = power["pue"] * power["active_w_per_core"] / 1e6
+    base_mw = (
+        power["pue"]
+        * N_MACHINES
+        * power["idle_w_per_machine"]
+        / 1e6
+    )
 
     core_hours = core_days * 24
     energy = _energy_core_rows(window_csv, core_hours)
@@ -73,7 +81,7 @@ def build_hourly_input(
             f"{envelope_csv.name} has {len(envelope)} hours, need {core_hours}"
         )
 
-    online_mw = _online_cores(stats_json) * POWER_PER_CORE_MW
+    online_mw = _online_cores(stats_json) * power_per_core_mw
 
     aligned: list[HourlyInput] = []
     for hour, energy_row in enumerate(energy):
@@ -95,14 +103,14 @@ def build_hourly_input(
                     energy_row["forecast_consumed_co2_lbs_per_kwh"] or 0.0
                 ),
                 online_mw=online_mw,
-                base_mw=BASE_MW,
+                base_mw=base_mw,
                 batch_baseline_mwh=(
                     float(workload_row["baseline_energy_core_hours"] or 0.0)
-                    * POWER_PER_CORE_MW
+                    * power_per_core_mw
                 ),
                 batch_window_mwh=(
                     float(workload_row["flexible_window_energy_core_hours"] or 0.0)
-                    * POWER_PER_CORE_MW
+                    * power_per_core_mw
                 ),
             )
         )

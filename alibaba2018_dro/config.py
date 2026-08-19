@@ -40,8 +40,12 @@ ENERGY_INPUT_COLUMNS = (
     "forecast_consumed_co2_lbs_per_kwh",
 )
 
-# Power model (scenario; resource-demand proxy, not measured power)
-PUE = 1.2
-WATTS_PER_CORE = 3.0
-IDLE_WATTS_PER_MACHINE = 150.0
 N_MACHINES = 4034
+
+# 功率模型：本实验无功率遥测，按 2018 年代约 96 核生产服务器的公开区间设定。
+# 主结果用 "base"，low/high 做敏感性，不声称实测功率。
+POWER_SCENARIOS = {
+    "low": {"pue": 1.10, "idle_w_per_machine": 100.0, "active_w_per_core": 2.0},
+    "base": {"pue": 1.20, "idle_w_per_machine": 150.0, "active_w_per_core": 3.0},
+    "high": {"pue": 1.40, "idle_w_per_machine": 200.0, "active_w_per_core": 4.0},
+}

@@ -31,17 +31,18 @@
 > 无 usage 表，故这是“资源需求代理”，不是实测功率；绝对量级是场景参数，结果重点在相对降本降碳。
 
 ```text
-PUE                       = 1.2
-WATTS_PER_CORE            = 3.0 W   # 每核活动功率（场景）
-IDLE_WATTS_PER_MACHINE    = 150.0 W  # 每台机器空闲/基座功率（场景）
-N_MACHINES                = 4034
+N_MACHINES = 4034（来自 machine_meta）
+功率场景（无遥测，按 2018 年代约 96 核服务器公开区间设定）：
+  low : PUE 1.10, idle 100 W/machine, active 2.0 W/core
+  base: PUE 1.20, idle 150 W/machine, active 3.0 W/core
+  high: PUE 1.40, idle 200 W/machine, active 4.0 W/core
 ```
 
 ```text
-power_per_core_mw = PUE × WATTS_PER_CORE / 1e6
+power_per_core_mw = PUE × active_w_per_core / 1e6
 online_mw         = online_reserved_cores × power_per_core_mw        # 固定、必须满足
 batch_mwh(t)      = baseline_energy_core_hours(t) × power_per_core_mw # 可延迟
-base_mw           = PUE × N_MACHINES × IDLE_WATTS_PER_MACHINE / 1e6    # 固定基座
+base_mw           = PUE × N_MACHINES × idle_w_per_machine / 1e6        # 固定基座
 ```
 
 诚实边界：`online_mw` 是静态预留（上界），`batch_mwh` 是 `plan_cpu` 计划需求；二者都不声称实测功率。基座功率在基线里为固定常数，不影响优化，仅用于功率平衡与总量报告。
@@ -90,5 +91,6 @@ Jan 2025 窗口（PySCIPOpt，LP）：
 ## 6. config 参数评审（进行中）
 
 - 预测/窗口参数（90 天历史、48h 保护、28 天基线、2024 验证、Ridge α）与 `docs/forecasting.md` 一致，合理。
-- 功率模型：`PUE=1.2`、`WATTS_PER_CORE=3.0`、`IDLE_WATTS_PER_MACHINE=150`、`N_MACHINES=4034` 各自在合理区间；但 `online_reserved_cores(362k) + batch 平均核数(514k) > 物理核数(387k)`，说明“在线静态预留”和“plan_cpu×instance_num”都是上界代理、非同时实际占用，绝对 MW 会被高估约 2 倍。优化对尺度不敏感，绝对 MW/$ 需后续用利用率假设归一化。
+- 功率模型改为 low/base/high 三场景（不再沿用旧 GPU 实验的单点 `PUE=1.2`）；base 值按约 96 核服务器公开区间设定，主结果用 base、low/high 做敏感性。
+- 仍存在：`online_reserved_cores(362k) + batch 平均核数(514k) > 物理核数(387k)`，说明“在线静态预留”和“plan_cpu×instance_num”都是上界代理、非同时实际占用，绝对 MW 会被高估约 2 倍。优化对尺度不敏感，绝对 MW/$ 需后续用利用率假设归一化。
 - `MAX_BATCH_DURATION_HOURS=168`、`COMPLETION_SLACK_HOURS=3` 目前只是窗口文件名 `d168_h3` 的残留标识，非实际约束，可保留。
