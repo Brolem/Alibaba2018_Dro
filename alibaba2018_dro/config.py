@@ -39,3 +39,9 @@ ENERGY_INPUT_COLUMNS = (
     "forecast_erco_wind_generation_mwh",
     "forecast_consumed_co2_lbs_per_kwh",
 )
+
+# Power model (scenario; resource-demand proxy, not measured power)
+PUE = 1.2
+WATTS_PER_CORE = 3.0
+IDLE_WATTS_PER_MACHINE = 150.0
+N_MACHINES = 4034

@@ -1,4 +1,4 @@
-"""Assemble a unified hourly scheduler input from energy windows and workload data."""
+"""Assemble a unified hourly scheduler input (MW) from energy and workload data."""
 
 from __future__ import annotations
 
@@ -7,10 +7,14 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from .config import IDLE_WATTS_PER_MACHINE, N_MACHINES, PUE, WATTS_PER_CORE
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data"
-TRACE_CORE_HOURS = 8 * 24
+
+POWER_PER_CORE_MW = PUE * WATTS_PER_CORE / 1e6
+BASE_MW = PUE * N_MACHINES * IDLE_WATTS_PER_MACHINE / 1e6
 
 
 @dataclass(frozen=True)
@@ -23,10 +27,10 @@ class HourlyInput:
     forecast_erco_solar_generation_mwh: float
     forecast_erco_wind_generation_mwh: float
     forecast_consumed_co2_lbs_per_kwh: float
-    online_cores: float
-    batch_baseline_cores: float
-    batch_baseline_energy_core_hours: float
-    batch_flexible_window_energy_core_hours: float
+    online_mw: float
+    base_mw: float
+    batch_baseline_mwh: float
+    batch_window_mwh: float
 
 
 def _energy_core_rows(window_csv: Path, core_hours: int) -> list[dict[str, str]]:
@@ -59,20 +63,21 @@ def build_hourly_input(
     *,
     core_days: int = 30,
 ) -> list[HourlyInput]:
-    """Align one energy window's core days with the workload envelope.
-
-    The 8-day trace envelope is rolled forward to fill the requested core
-    horizon; this is a scenario extension, not additional measured workload.
-    """
+    """Align one energy window's core days with the workload envelope (MW)."""
 
     core_hours = core_days * 24
     energy = _energy_core_rows(window_csv, core_hours)
     envelope = _read_envelope(envelope_csv)
-    online_cores = _online_cores(stats_json)
+    if len(envelope) < core_hours:
+        raise ValueError(
+            f"{envelope_csv.name} has {len(envelope)} hours, need {core_hours}"
+        )
+
+    online_mw = _online_cores(stats_json) * POWER_PER_CORE_MW
 
     aligned: list[HourlyInput] = []
     for hour, energy_row in enumerate(energy):
-        workload_row = envelope[hour % TRACE_CORE_HOURS]
+        workload_row = envelope[hour]
         aligned.append(
             HourlyInput(
                 hour=hour,
@@ -89,13 +94,15 @@ def build_hourly_input(
                 forecast_consumed_co2_lbs_per_kwh=float(
                     energy_row["forecast_consumed_co2_lbs_per_kwh"] or 0.0
                 ),
-                online_cores=online_cores,
-                batch_baseline_cores=float(workload_row["baseline_cores"] or 0.0),
-                batch_baseline_energy_core_hours=float(
-                    workload_row["baseline_energy_core_hours"] or 0.0
+                online_mw=online_mw,
+                base_mw=BASE_MW,
+                batch_baseline_mwh=(
+                    float(workload_row["baseline_energy_core_hours"] or 0.0)
+                    * POWER_PER_CORE_MW
                 ),
-                batch_flexible_window_energy_core_hours=float(
-                    workload_row["flexible_window_energy_core_hours"] or 0.0
+                batch_window_mwh=(
+                    float(workload_row["flexible_window_energy_core_hours"] or 0.0)
+                    * POWER_PER_CORE_MW
                 ),
             )
         )
