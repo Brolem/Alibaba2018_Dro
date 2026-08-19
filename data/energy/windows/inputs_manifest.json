@@ -1,0 +1,95 @@
+{
+  "completion_slack_hours": 3,
+  "forecast": {
+    "baseline_method": "same_hour_median_28d_v1",
+    "history_days": 90,
+    "information_protection_hours": 48,
+    "method": "direct_ridge_90d_v1",
+    "predicted_row_count": 3564,
+    "ridge_alphas": {
+      "erco_consumed_co2_intensity_lbs_per_kwh": 100.0,
+      "erco_solar_generation_mwh": 100.0,
+      "erco_wind_generation_mwh": 100.0
+    },
+    "validation": {
+      "origin_count": 12,
+      "origin_dates": [
+        "2024-01-15",
+        "2024-02-15",
+        "2024-03-15",
+        "2024-04-15",
+        "2024-05-15",
+        "2024-06-15",
+        "2024-07-15",
+        "2024-08-15",
+        "2024-09-15",
+        "2024-10-15",
+        "2024-11-15",
+        "2024-12-15"
+      ],
+      "targets": {
+        "erco_consumed_co2_intensity_lbs_per_kwh": {
+          "median_mae": 0.11495472984493237,
+          "median_nmae": 0.17436186415249863,
+          "ridge_mae": 0.10398776115785695,
+          "ridge_nmae": 0.15772730629689727,
+          "sample_count": 288,
+          "selected_alpha": 100.0
+        },
+        "erco_solar_generation_mwh": {
+          "median_mae": 1124.0034722222222,
+          "median_nmae": 0.20638696416138977,
+          "ridge_mae": 1324.654303401005,
+          "ridge_nmae": 0.2432300139622726,
+          "sample_count": 288,
+          "selected_alpha": 100.0
+        },
+        "erco_wind_generation_mwh": {
+          "median_mae": 5248.782986111111,
+          "median_nmae": 0.3391950417573659,
+          "ridge_mae": 5212.919207591977,
+          "ridge_nmae": 0.3368773967176369,
+          "sample_count": 288,
+          "selected_alpha": 100.0
+        }
+      },
+      "validation_year": 2024
+    },
+    "validation_year": 2024
+  },
+  "max_spot_duration_hours": 168,
+  "missing_value_counts": {
+    "dam_lz_houston_usd_per_mwh": 0,
+    "erco_consumed_co2_intensity_lbs_per_kwh": 0,
+    "erco_solar_generation_mwh": 0,
+    "erco_wind_generation_mwh": 0,
+    "forecast_consumed_co2_lbs_per_kwh": 684,
+    "forecast_cutoff_utc": 684,
+    "forecast_erco_solar_generation_mwh": 684,
+    "forecast_erco_wind_generation_mwh": 684,
+    "forecast_method": 684
+  },
+  "outputs": {
+    "2025-01-01_30d_d168_h3_energy.csv": "9B96D347793520188C036C772870195F92D67E57F09407FCEA8B36B0CEC6D22C",
+    "2025-04-01_30d_d168_h3_energy.csv": "4D0372A06B4C275ADCE197F52951CAE36CAF5C7322025E9E00DD2196E48F8D60",
+    "2025-07-01_30d_d168_h3_energy.csv": "7EDCA96A970E0F4C6E59146DE9A8092DBF65720076D644A1455B5CFCC52D598B",
+    "2025-10-01_30d_d168_h3_energy.csv": "4C41064C01ABBE301D46283960E6E5F4D15763AFEF31D0C79CF807E69E8FBE95"
+  },
+  "schema_version": 2,
+  "sources": {
+    "eia_930_erco": "0EFF7C52C9014F83EDF83831C21C130E7055DD1DCCE24235369040EFE8AA41E0",
+    "ercot_dam_2024_np4_180_er": "B9FD0B9AA9EC83376C6385C91416174857CA6BA556C6DF08E942A2F98B89AF65",
+    "shared_ercot_2025": "278C68DF51C15B33B1C449C623856E84AEF22DEBC584BB1768B945DE67BEDBD8"
+  },
+  "window_hours": {
+    "context": 171,
+    "core": 720,
+    "settlement_tail": 171
+  },
+  "window_starts": [
+    "2025-01-01",
+    "2025-04-01",
+    "2025-07-01",
+    "2025-10-01"
+  ]
+}

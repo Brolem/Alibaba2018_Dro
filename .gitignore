@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# 原始/大文件（可重新下载，不进入版本控制）
+data/energy/eia_930_erco_full_history.xlsx
+data/energy/ercot_2025_historical_dam_load_zone_and_hub_prices.zip
+data/workload/*.tar.gz
+data/workload/batch_task.csv
+data/workload/batch_instance.csv
+
+# 运行产物
+outputs/
