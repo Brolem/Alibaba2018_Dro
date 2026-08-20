@@ -51,6 +51,8 @@ def solve_batch_shift(
     soc_max: float = 0.90,
     soc_initial: float = 0.50,
     pv_capacity_mw: float | None = None,
+    robustness_budget: float = 0.0,
+    energy_uncertainty_fraction: float = 0.079,
 ) -> BatchShiftResult:
     """Shift deferrable batch energy to cut cost, with grid/ramp limits and BESS."""
 
@@ -111,6 +113,7 @@ def solve_batch_shift(
             p_grid[item.hour] = p_grid[item.hour] - pv[item.hour]
 
     total_energy = sum(item.batch_baseline_mwh for item in inputs)
+    total_energy *= 1.0 + robustness_budget * energy_uncertainty_fraction
     model.addCons(
         sum(batch[item.hour] for item in inputs) == total_energy,
         name="batch_energy_conservation",
@@ -295,4 +298,40 @@ def sweep_pv_capacity(
             pv_capacity_mw=capacity,
         )
         rows.append((fraction, result.feasible, result.cost_reduction, capacity))
+    return rows
+
+
+def sweep_robustness_budget(
+    inputs: list[HourlyInput],
+    *,
+    g_max_fraction: float,
+    r_max_fraction: float,
+    budgets: list[float],
+    energy_uncertainty_fraction: float = 0.079,
+    bess_power_fraction: float = 0.5,
+    bess_energy_hours: float = 2.0,
+    pv_fraction: float = 1.0,
+) -> list[tuple[float, bool, float]]:
+    """Sweep the robustness budget Gamma (compute-side energy uncertainty)."""
+
+    p_peak = _peak_load(inputs)
+    p_must = inputs[0].online_mw + inputs[0].base_mw
+    g_max_mw = g_max_fraction * p_peak
+    r_max_mw = r_max_fraction * p_peak
+    p_grid_initial = p_must + inputs[0].batch_baseline_mwh
+
+    rows: list[tuple[float, bool, float]] = []
+    for budget in budgets:
+        result = solve_batch_shift(
+            inputs,
+            g_max_mw=g_max_mw,
+            r_max_mw=r_max_mw,
+            p_grid_initial_mw=p_grid_initial,
+            bess_power_mw=bess_power_fraction * p_peak,
+            bess_energy_mwh=bess_energy_hours * bess_power_fraction * p_peak,
+            pv_capacity_mw=pv_fraction * p_must,
+            robustness_budget=budget,
+            energy_uncertainty_fraction=energy_uncertainty_fraction,
+        )
+        rows.append((budget, result.feasible, result.cost_reduction))
     return rows
