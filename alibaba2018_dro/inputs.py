@@ -1,4 +1,4 @@
-"""Assemble a unified hourly scheduler input (MW) from energy and workload data."""
+"""把能源窗口、workload 柔性包络、在线负荷对齐成统一小时输入（MW）。"""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ DATA = ROOT / "data"
 
 @dataclass(frozen=True)
 class HourlyInput:
-    """One aligned scheduler hour across energy and workload sources."""
+    """调度器的一个小时输入：能源价格/预测 + 在线负荷 + 批处理柔性 + 基座功率。"""
 
     hour: int
     timestamp_utc: str
@@ -60,7 +60,7 @@ def build_hourly_input(
     core_days: int = 30,
     scenario: str = "base",
 ) -> list[HourlyInput]:
-    """Align one energy window's core days with the workload envelope (MW)."""
+    """取一个能源窗口的 30 天核心期，与 workload 包络逐小时对齐并换算成 MW。"""
 
     if scenario not in POWER_SCENARIOS:
         raise ValueError(f"unknown power scenario: {scenario}")

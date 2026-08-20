@@ -3,18 +3,23 @@ from __future__ import annotations
 import datetime as dt
 
 
+# 论文窗口结构：30 天核心期（720 小时），前后各 171 小时上下文/结算尾段
 CORE_HOURS = 30 * 24
 CONTEXT_HOURS = 171
 TAIL_HOURS = 171
+# 窗口文件名里的残留标识（d168 / h3），不是实际约束
 MAX_BATCH_DURATION_HOURS = 168
 COMPLETION_SLACK_HOURS = 3
+# 层级目标第二层的成本保护带：C ≤ C* + 1%·max(|C*|, 1 USD)
 COST_GUARDRAIL_FRACTION = 0.01
+# 预测器超参：90 天滚动历史、48 小时信息保护期、28 天同小时基线、2024 验证
 FORECAST_HISTORY_DAYS = 90
 FORECAST_INFORMATION_PROTECTION_HOURS = 48
 FORECAST_BASELINE_DAYS = 28
 FORECAST_VALIDATION_YEAR = 2024
 RIDGE_ALPHAS = (0.01, 0.1, 1.0, 10.0, 100.0)
 FORECAST_METHOD = "direct_ridge_90d_v1"
+# 四个固定 2025 主窗口（1/4/7/10 月）
 PAPER_WINDOW_STARTS = (
     dt.date(2025, 1, 1),
     dt.date(2025, 4, 1),
