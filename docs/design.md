@@ -23,7 +23,7 @@
 ## 2. 工作负载扩展（方法 2）
 
 - `scripts/generate_workload.py`：读 `compute_uncertainty.json` 的逐小时到达率，用 numpy `Poisson` 生成每小时到达数；每个到达有放回抽取真实任务记录（时长 + 能量），保留时长-能量联合分布。
-- 输出 `data/workload/generated_envelope_30d.csv`（720 小时），消除 8 天滚动周期。
+- 输出 `data/processed/workload/generated_envelope_30d.csv`（720 小时），消除 8 天滚动周期。
 - 校验：30 天基线能量 = 8 天的 3.69×；窗口能量/基线能量 = 3.60×，与原 trace 一致。
 
 ## 3. 功率模型（cores → MW）

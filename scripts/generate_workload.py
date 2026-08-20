@@ -1,11 +1,10 @@
-"""Generate an extended hourly flexibility envelope by resampling the 8-day trace.
+"""通过重采样 8 天 trace 生成扩展后的逐小时柔性包络。
 
-Method 2 (task-level Monte Carlo): fit the empirical hourly arrival rate, then
-simulate ``--days`` days with Poisson arrivals; each arrival resamples a real
-task record (duration + energy) so the joint distribution is preserved and the
-8-day periodicity of naive rolling is removed.
+方法 2（任务级蒙特卡洛）：先用经验逐小时到达率，再用 Poisson 到达模拟 ``--days`` 天；
+每个到达有放回抽取真实任务记录（时长 + 能量），从而保留时长—能量联合分布，
+并消除朴素滚动带来的 8 天周期性。
 
-Dependencies: numpy only.
+依赖：仅 numpy。
 """
 
 from __future__ import annotations
@@ -19,12 +18,14 @@ import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKLOAD = ROOT / "data" / "workload"
+RAW_WORKLOAD = ROOT / "data" / "raw" / "workload"
+PROCESSED_WORKLOAD = ROOT / "data" / "processed" / "workload"
 SECONDS_PER_HOUR = 3600
 TRACE_TASKS = 14_295_731
 
 
 def _load_arrival_rate(uncertainty_path: Path) -> np.ndarray:
+    """从算力侧不确定集 JSON 读取逐小时任务到达率。"""
     payload = json.loads(uncertainty_path.read_text(encoding="utf-8"))
     hourly = payload["arrival"]["hourly_nominal"]["tasks"]
     return np.array([float(hourly[str(h)]) for h in range(len(hourly))])
@@ -33,7 +34,7 @@ def _load_arrival_rate(uncertainty_path: Path) -> np.ndarray:
 def _build_task_pool(
     batch_task_path: Path, *, max_tasks: int, seed: int
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Uniformly subsample real task records into (duration_minutes, energy)."""
+    """均匀抽样真实任务记录，得到 (时长分钟数, 能量) 两个数组。"""
 
     rng = np.random.default_rng(seed)
     durations: list[int] = []
@@ -71,6 +72,7 @@ def generate_envelope(
     durations: np.ndarray,
     energies: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """按到达率与任务池生成若干天的基线核数、基线能量与柔性窗口能量。"""
     rng = np.random.default_rng(seed)
     hours = days * 24
     base_rate = arrival_rate[:192]  # 8-day core; ignore the settlement tail
@@ -116,13 +118,13 @@ def main() -> None:
     parser.add_argument(
         "--out",
         type=Path,
-        default=WORKLOAD / "generated_envelope_30d.csv",
+        default=PROCESSED_WORKLOAD / "generated_envelope_30d.csv",
     )
     args = parser.parse_args()
 
-    arrival_rate = _load_arrival_rate(WORKLOAD / "compute_uncertainty.json")
+    arrival_rate = _load_arrival_rate(PROCESSED_WORKLOAD / "compute_uncertainty.json")
     durations, energies = _build_task_pool(
-        WORKLOAD / "batch_task.csv",
+        RAW_WORKLOAD / "batch_task.csv",
         max_tasks=args.pool_size,
         seed=args.seed,
     )

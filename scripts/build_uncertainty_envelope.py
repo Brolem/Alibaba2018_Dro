@@ -18,11 +18,13 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKLOAD = ROOT / "data" / "workload"
+RAW_WORKLOAD = ROOT / "data" / "raw" / "workload"
+PROCESSED_WORKLOAD = ROOT / "data" / "processed" / "workload"
 SECONDS_PER_HOUR = 3600
 
 
 def _quantiles_from_hist(hist: dict[int, int], qs=()):
+    """从以小时为 bin 的直方图近似计算多个分位数（小时）。"""
     total = sum(hist.values())
     if total == 0:
         return {q: 0.0 for q in qs}
@@ -41,6 +43,7 @@ def _quantiles_from_hist(hist: dict[int, int], qs=()):
 
 
 def _welford_summary(rec: dict) -> dict:
+    """把 Welford 在线统计的原始累计量汇总为均值/标准差/最小/最大（小时）。"""
     n = rec["n"]
     if n == 0:
         return {}
@@ -60,12 +63,12 @@ def main() -> None:
     ap.add_argument(
         "--out-unc",
         type=Path,
-        default=WORKLOAD / "compute_uncertainty.json",
+        default=PROCESSED_WORKLOAD / "compute_uncertainty.json",
     )
     ap.add_argument(
         "--out-env",
         type=Path,
-        default=WORKLOAD / "hourly_flexibility_envelope.csv",
+        default=PROCESSED_WORKLOAD / "hourly_flexibility_envelope.csv",
     )
     args = ap.parse_args()
 
@@ -91,7 +94,7 @@ def main() -> None:
             r["mx"] = dsec
         dur_hist[key][dsec // 60] += 1
 
-    with (WORKLOAD / "batch_task.csv").open("r", encoding="utf-8", newline="") as f:
+    with (RAW_WORKLOAD / "batch_task.csv").open("r", encoding="utf-8", newline="") as f:
         for line in f:
             p = line.rstrip("\r\n").split(",")
             instance_num = int(p[1]) if p[1] else 0

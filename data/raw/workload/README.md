@@ -1,4 +1,4 @@
-# Alibaba cluster-trace-v2018 下载与字段说明
+# Alibaba cluster-trace-v2018 下载与字段说明（raw/workload）
 
 ## 下载
 
@@ -20,6 +20,8 @@
 | `container_meta.tar.gz` | `FEBD75E693D1F208A8941395E7FAA7E466E50D21C256EFF12A815B7E2FA2053F` |
 | `batch_task.tar.gz` | `7C4B32361BD1EC2083647A8F52A6854A03BC125CA5C202652316C499FBF978C6` |
 
+`batch_task.csv` 与 `*.tar.gz` 由 `.gitignore` 排除；`container_meta.csv`、`machine_meta.csv` 体积较小、暂纳入版本控制。
+
 ## 实际表结构（来自官方 schema.txt，CSV 无表头）
 
 | 表 | 字段（按列顺序） | 用途 |
@@ -35,10 +37,4 @@
 - `batch_task.task_type` 是 12 种批处理任务类型之一（观测值 1–12），不是 batch/service 标志；DAG 信息在 `task_name` 的 `M/R + 数字` 结构里。
 - `machine_meta` 的容量字段是 `cpu_num` 与 `mem_size`（归一化 [0,100]），不是 `capacity_cpu`/`capacity_memory`。
 
-## 派生规则（供实现参考）
-
-1. 可延迟批处理作业 = `batch_task`（或 `batch_instance`）的全部记录；`container_meta` 为在线服务负载。
-2. `release = start_time`；`deadline = end_time`（或 `start_time + 观测时长 + 标定 slack`）。
-3. 用 `plan_cpu` / 在线 `cpu_request` 与服务器 `cpu_num` → 服务器功率（利用率相关功率 + base/idle 功率）。
-4. 作业到达率与执行时长的经验分布 → 算力侧不确定集。
-5. 先统计 `batch_task.task_type`（1–12）与 `task_name` 的 DAG 结构，确定可延迟能量占比，再决定柔性包络与基线。
+派生到柔性包络/不确定集的规则见 `data/processed/workload/README.md`。

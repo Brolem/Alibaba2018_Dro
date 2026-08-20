@@ -20,17 +20,13 @@ from alibaba2018_dro.eia_history import (
 )
 
 
-ENERGY_DIRECTORY = PROJECT_ROOT / "data" / "energy"
-DEFAULT_OUTPUT_DIRECTORY = (
-    PROJECT_ROOT
-    / "outputs"
-    / "alibaba2018_dro"
-    / "day_ahead"
-    / "inputs"
-)
+RAW_ENERGY_DIRECTORY = PROJECT_ROOT / "data" / "raw" / "energy"
+PROCESSED_ENERGY_DIRECTORY = PROJECT_ROOT / "data" / "processed" / "energy"
+DEFAULT_OUTPUT_DIRECTORY = PROCESSED_ENERGY_DIRECTORY / "windows"
 
 
 def _read_csv_rows(path: Path) -> list[dict[str, str]]:
+    """读取一张带表头的 CSV，返回全部行；缺失文件直接报错。"""
     if not path.is_file():
         raise FileNotFoundError(f"missing input CSV: {path}")
     with path.open("r", encoding="utf-8", newline="") as input_file:
@@ -41,6 +37,7 @@ def _read_csv_rows(path: Path) -> list[dict[str, str]]:
 
 
 def _source_argument(value: str) -> tuple[str, Path]:
+    """解析命令行 --source ID=PATH 参数，返回 (来源标识, 文件路径)。"""
     source_id, separator, path_text = value.partition("=")
     if not separator or not source_id or not path_text:
         raise argparse.ArgumentTypeError(
@@ -62,24 +59,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--annual-2025",
         type=Path,
-        default=ENERGY_DIRECTORY / "ercot_2025_houston_hourly.csv",
-        help="Shared 2025 ERCOT Houston annual table.",
+        default=PROCESSED_ENERGY_DIRECTORY / "ercot_2025_houston_hourly.csv",
+        help="Shared 2025 ERCOT Houston annual table (processed data).",
     )
     parser.add_argument(
         "--ercot-2024-dam",
         type=Path,
         default=(
-            ENERGY_DIRECTORY
+            RAW_ENERGY_DIRECTORY
             / "ercot_2024_historical_dam_load_zone_and_hub_prices.zip"
         ),
-        help="Ignored official ERCOT 2024 annual DAM archive.",
+        help="Official ERCOT 2024 annual DAM archive (raw data).",
     )
     parser.add_argument(
         "--eia-history",
         type=Path,
-        default=ENERGY_DIRECTORY / "eia_930_erco_full_history.xlsx",
+        default=RAW_ENERGY_DIRECTORY / "eia_930_erco_full_history.xlsx",
         help=(
-            "Ignored EIA-930 workbook used to construct leakage-free ERCO forecasts."
+            "EIA-930 workbook used to construct leakage-free ERCO forecasts "
+            "(raw data)."
         ),
     )
     parser.add_argument(
@@ -89,9 +87,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         required=True,
         metavar="ID=PATH",
         help=(
-            "Raw public source to hash, for example "
-            "eia_930_erco=data/energy/eia_930_erco_full_history.xlsx. Repeat for "
-            "each source; IDs never contain a local path."
+            "Raw public source to hash, e.g. "
+            "eia_930_erco=data/raw/energy/eia_930_erco_full_history.xlsx. "
+            "Repeat for each source; IDs never contain a local path."
         ),
     )
     parser.add_argument(

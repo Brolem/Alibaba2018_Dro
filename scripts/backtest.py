@@ -21,7 +21,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from alibaba2018_dro.inputs import DATA, build_hourly_input
+from alibaba2018_dro.inputs import DATA_PROCESSED, DATA_RESULTS, build_hourly_input
 from alibaba2018_dro.scheduler import _peak_load, _pv_profile, solve_batch_shift
 
 
@@ -101,9 +101,9 @@ def run_backtest(
 
 def main() -> None:
     inputs = build_hourly_input(
-        DATA / "energy" / "windows" / "2025-01-01_30d_d168_h3_energy.csv",
-        DATA / "workload" / "generated_envelope_30d.csv",
-        DATA / "workload" / "workload_stats.json",
+        DATA_PROCESSED / "energy" / "windows" / "2025-01-01_30d_d168_h3_energy.csv",
+        DATA_PROCESSED / "workload" / "generated_envelope_30d.csv",
+        DATA_PROCESSED / "workload" / "workload_stats.json",
     )
     p_must = inputs[0].online_mw + inputs[0].base_mw
     p_peak = _peak_load(inputs)
@@ -141,7 +141,7 @@ def main() -> None:
             f"grid_violation={row.get('grid_violation_rate', 0):.4f}"
         )
 
-    out = PROJECT_ROOT / "data" / "workload" / "backtest_results.json"
+    out = DATA_RESULTS / "backtest_results.json"
     out.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
 
     FIGURES.mkdir(parents=True, exist_ok=True)

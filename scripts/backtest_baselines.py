@@ -12,7 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import numpy as np
 
-from alibaba2018_dro.inputs import DATA, build_hourly_input
+from alibaba2018_dro.inputs import DATA_PROCESSED, DATA_RESULTS, build_hourly_input
 from alibaba2018_dro.scheduler import (
     _peak_load,
     _pv_profile,
@@ -31,9 +31,9 @@ def evaluate_window(window_start: str) -> list[dict]:
     """对单个窗口求解三个方案并回测，返回每方法的 (成本下降, PV 越限率)。"""
 
     inputs = build_hourly_input(
-        DATA / "energy" / "windows" / f"{window_start}_30d_d168_h3_energy.csv",
-        DATA / "workload" / "generated_envelope_30d.csv",
-        DATA / "workload" / "workload_stats.json",
+        DATA_PROCESSED / "energy" / "windows" / f"{window_start}_30d_d168_h3_energy.csv",
+        DATA_PROCESSED / "workload" / "generated_envelope_30d.csv",
+        DATA_PROCESSED / "workload" / "workload_stats.json",
     )
     p_must = inputs[0].online_mw + inputs[0].base_mw
     p_peak = _peak_load(inputs)
@@ -101,7 +101,7 @@ def main() -> None:
                 f"pv_overload_rate={r['pv_overload_rate']:.4f}"
             )
 
-    out = DATA / "workload" / "baseline_backtest_four_windows.csv"
+    out = DATA_RESULTS / "baseline_backtest_four_windows.csv"
     with out.open("w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(all_rows[0].keys()))
         writer.writeheader()

@@ -12,6 +12,9 @@ from .config import N_MACHINES, POWER_SCENARIOS
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data"
+DATA_RAW = DATA / "raw"
+DATA_PROCESSED = DATA / "processed"
+DATA_RESULTS = DATA / "results"
 
 @dataclass(frozen=True)
 class HourlyInput:
@@ -31,6 +34,7 @@ class HourlyInput:
 
 
 def _energy_core_rows(window_csv: Path, core_hours: int) -> list[dict[str, str]]:
+    """读取一个能源窗口 CSV，只取核心期（period_role == "core"）的小时行。"""
     rows: list[dict[str, str]] = []
     with window_csv.open("r", encoding="utf-8", newline="") as f:
         for row in csv.DictReader(f):
@@ -44,11 +48,13 @@ def _energy_core_rows(window_csv: Path, core_hours: int) -> list[dict[str, str]]
 
 
 def _read_envelope(envelope_csv: Path) -> list[dict[str, str]]:
+    """读取 workload 柔性包络 CSV，返回全部小时行。"""
     with envelope_csv.open("r", encoding="utf-8", newline="") as f:
         return list(csv.DictReader(f))
 
 
 def _online_cores(stats_json: Path) -> float:
+    """从 workload 统计 JSON 读取在线负载的静态预留核数。"""
     payload = json.loads(stats_json.read_text(encoding="utf-8"))
     return float(payload["online_static"]["online_reserved_cores"])
 

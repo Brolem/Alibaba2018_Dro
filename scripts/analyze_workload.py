@@ -4,7 +4,7 @@
 不依赖 machine_usage / container_usage。所有“能量/占比”均为资源需求口径的
 静态代理，不是实测能耗；真实利用率需要 usage 表。
 
-输出：data/workload/workload_stats.json
+输出：data/processed/workload/workload_stats.json
 """
 
 from __future__ import annotations
@@ -17,7 +17,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKLOAD = ROOT / "data" / "workload"
+RAW_WORKLOAD = ROOT / "data" / "raw" / "workload"
+PROCESSED_WORKLOAD = ROOT / "data" / "processed" / "workload"
 
 DAG_RE = re.compile(r"^[A-Z]\d+(_\d+)*$")
 SECONDS_PER_HOUR = 3600
@@ -39,7 +40,8 @@ def _quantile_from_hist(hist: dict[int, int], q: float) -> float:
 
 
 def analyze_batch_task() -> dict:
-    path = WORKLOAD / "batch_task.csv"
+    """流式统计 batch_task.csv，产出任务/时长/到达等柔性特征。"""
+    path = RAW_WORKLOAD / "batch_task.csv"
     by_type = defaultdict(
         lambda: {
             "tasks": 0,
@@ -160,9 +162,10 @@ def analyze_batch_task() -> dict:
 
 
 def analyze_online_and_machines() -> dict:
+    """从 container_meta 与 machine_meta 统计在线静态预留与机器核数。"""
     container_max: dict[str, tuple[int, int, int, int]] = {}
     container_machines: set[str] = set()
-    with (WORKLOAD / "container_meta.csv").open("r", encoding="utf-8", newline="") as f:
+    with (RAW_WORKLOAD / "container_meta.csv").open("r", encoding="utf-8", newline="") as f:
         for line in f:
             parts = line.rstrip("\r\n").split(",")
             # container_id, machine_id, time_stamp, app_du, status,
@@ -185,7 +188,7 @@ def analyze_online_and_machines() -> dict:
                 )
 
     machine_cpu: dict[str, int] = {}
-    with (WORKLOAD / "machine_meta.csv").open("r", encoding="utf-8", newline="") as f:
+    with (RAW_WORKLOAD / "machine_meta.csv").open("r", encoding="utf-8", newline="") as f:
         for line in f:
             parts = line.rstrip("\r\n").split(",")
             # machine_id, time_stamp, fd1, fd2, cpu_num, mem_size, status
@@ -217,7 +220,7 @@ def main() -> None:
     parser.add_argument(
         "--out",
         type=Path,
-        default=WORKLOAD / "workload_stats.json",
+        default=PROCESSED_WORKLOAD / "workload_stats.json",
     )
     args = parser.parse_args()
 

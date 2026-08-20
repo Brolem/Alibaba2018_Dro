@@ -14,9 +14,14 @@
 数据流：
 
 ```text
-原始能源/EIA → eia_history → forecasting → energy → 窗口 CSV
-batch_task → build_uncertainty_envelope → 柔性包络 CSV
-generated_envelope_30d.csv + 窗口 CSV → inputs.HourlyInput → scheduler → 结果
+原始能源/EIA（data/raw/energy）
+  → eia_history → forecasting → energy → 共享年度表 + 1062h 窗口（data/processed/energy）
+
+batch_task（data/raw/workload）
+  → analyze_workload / build_uncertainty_envelope / generate_workload
+  → 柔性包络 + 在线核数（data/processed/workload）
+
+窗口 CSV + 柔性包络 + 在线核数 → inputs.HourlyInput → scheduler → 结果（data/results）
 ```
 
 运行环境：

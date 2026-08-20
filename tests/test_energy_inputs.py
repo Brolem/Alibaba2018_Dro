@@ -320,22 +320,27 @@ class EnergyInputTests(unittest.TestCase):
             self.assertGreaterEqual(metrics["ridge_mae"], 0.0)
             self.assertGreaterEqual(metrics["median_mae"], 0.0)
 
-    def test_shared_annual_table_backfills_only_the_missing_december_renewables(
+    def test_shared_annual_table_keeps_unpublished_renewables_empty(
         self,
     ) -> None:
+        """缺值不插补：风光缺失 48 小时、碳缺失 72 小时，其余字段完整。"""
         project_root = Path(__file__).parents[1]
-        annual_table = project_root / "data" / "energy" / "ercot_2025_houston_hourly.csv"
+        annual_table = (
+            project_root / "data" / "processed" / "energy" / "ercot_2025_houston_hourly.csv"
+        )
         with annual_table.open("r", encoding="utf-8", newline="") as input_file:
             rows = list(csv.DictReader(input_file))
 
+        self.assertEqual(len(rows), 8_760)
+        # 源工作簿未发布的 2025 年末时段保持为空，不以零、均值或插值替代。
         for column in (
             "erco_solar_generation_mwh",
             "erco_wind_generation_mwh",
         ):
             self.assertEqual(
                 sum(not row[column] for row in rows),
-                0,
-                f"{column} must be complete after the ERCOT Fuel Mix backfill",
+                48,
+                f"{column} must keep the 48 unpublished hours empty",
             )
         self.assertEqual(
             sum(
@@ -344,11 +349,12 @@ class EnergyInputTests(unittest.TestCase):
             ),
             72,
         )
-        first_backfilled_row = next(
+        # 缺失时段确实为空，而不是被回填。
+        missing_row = next(
             row for row in rows if row["timestamp_utc"] == "2025-12-04T07:00:00Z"
         )
-        self.assertEqual(first_backfilled_row["erco_solar_generation_mwh"], "0.096472")
-        self.assertEqual(first_backfilled_row["erco_wind_generation_mwh"], "21280.363466")
+        self.assertEqual(missing_row["erco_solar_generation_mwh"], "")
+        self.assertEqual(missing_row["erco_wind_generation_mwh"], "")
 
     def test_first_winter_hour_uses_the_preceding_18_central_cutoff(self) -> None:
         cutoff_builder = _require_implementation(day_ahead_cutoff_utc)

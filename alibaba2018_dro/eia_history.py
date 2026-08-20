@@ -1,4 +1,4 @@
-"""Paper-local reader for the public EIA-930 ERCO history workbook."""
+"""论文本地读取器：只依赖标准库解析公开 EIA-930 ERCO 历史工作簿。"""
 
 from __future__ import annotations
 
@@ -39,6 +39,7 @@ _MONTH_SHEETS = (
 
 
 def _shared_strings(archive: ZipFile) -> list[str]:
+    """读取 XLSX 的共享字符串表。"""
     try:
         root = ET.fromstring(archive.read("xl/sharedStrings.xml"))
     except KeyError:
@@ -50,6 +51,7 @@ def _shared_strings(archive: ZipFile) -> list[str]:
 
 
 def _worksheet_path(archive: ZipFile, sheet_name: str) -> str:
+    """由工作表名称解析其在 ZIP 内的实际路径。"""
     workbook = ET.fromstring(archive.read("xl/workbook.xml"))
     relationships = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
     targets = {
@@ -69,6 +71,7 @@ def _worksheet_path(archive: ZipFile, sheet_name: str) -> str:
 
 
 def _column_index(cell_reference: str) -> int:
+    """把 A1 风格列号（如 "C"）换算成从 0 开始的列索引。"""
     match = _COLUMN_REFERENCE.fullmatch(cell_reference)
     if match is None:
         raise ValueError(f"invalid XLSX cell reference: {cell_reference}")
@@ -79,6 +82,7 @@ def _column_index(cell_reference: str) -> int:
 
 
 def _cell_value(cell: ET.Element, shared_strings: Sequence[str]) -> str | float | None:
+    """读取一个单元格的值，处理共享字符串/内联字符串/数字等类型。"""
     cell_type = cell.attrib.get("t")
     if cell_type == "inlineStr":
         return "".join(text.text or "" for text in cell.iter(f"{_XLSX_NAMESPACE}t"))
@@ -104,7 +108,7 @@ def iter_xlsx_rows(
     *,
     columns: Iterable[str] | None = None,
 ) -> Iterator[dict[str, str | float]]:
-    """Yield selected nonempty rows from one XLSX worksheet without dependencies."""
+    """逐行产出某个工作表中选定的非空行，不引入任何第三方依赖。"""
 
     if isinstance(source, BytesIO):
         source.seek(0)
@@ -146,6 +150,7 @@ def iter_xlsx_rows(
 
 
 def _excel_datetime(value: object, *, label: str) -> dt.datetime:
+    """把 Excel 日期序列号转成 datetime。"""
     try:
         serial = float(value)
     except (TypeError, ValueError) as error:
@@ -156,6 +161,7 @@ def _excel_datetime(value: object, *, label: str) -> dt.datetime:
 
 
 def _optional_number(value: object, *, label: str) -> float | None:
+    """把可空值解析为有限数值，空值返回 None。"""
     if value in (None, ""):
         return None
     try:
@@ -168,6 +174,7 @@ def _optional_number(value: object, *, label: str) -> float | None:
 
 
 def _xlsx_payload_from_archive(path: Path) -> BytesIO:
+    """从 ZIP 容器中提取唯一的 XLSX 工作簿字节流。"""
     with ZipFile(path) as archive:
         workbook_names = [
             name
@@ -186,7 +193,7 @@ def load_houston_dam_prices(
     *,
     year: int,
 ) -> list[dict[str, object]]:
-    """Load one ERCOT annual archive and retain LZ_HOUSTON DAM prices."""
+    """读取一个 ERCOT 年度归档，只保留 LZ_HOUSTON 的 DAM 价格。"""
 
     payload = _xlsx_payload_from_archive(path)
     rows: list[dict[str, object]] = []
@@ -225,7 +232,7 @@ def load_houston_dam_prices(
 
 
 def load_erco_history(path: Path) -> list[dict[str, object]]:
-    """Load all ERCO observations for leakage-free forecast construction."""
+    """读取全部 ERCO 观测，用于构造无泄漏预测。"""
 
     rows: list[dict[str, object]] = []
     for source_row in iter_xlsx_rows(
@@ -268,7 +275,7 @@ def build_december_context(
     *,
     year: int,
 ) -> list[dict[str, object]]:
-    """Pair one December of LZ_HOUSTON DAM prices with EIA ERCO actuals."""
+    """把一个 12 月的 LZ_HOUSTON DAM 价格与 EIA ERCO 实际值配对。"""
 
     month_prefix = f"{year:04d}-12-"
     prices_by_date: dict[str, list[Mapping[str, object]]] = defaultdict(list)

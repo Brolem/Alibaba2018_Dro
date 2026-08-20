@@ -1,3 +1,9 @@
+"""能源侧输入构造：把 ERCOT 价格与 EIA 风光/碳组合成无泄漏论文窗口。
+
+职责：定义 30 天核心期（含 171 小时上下文、171 小时结算尾）的窗口结构，
+按固定日前截止时刻（18:00 America/Chicago）物化四个 2025 窗口，并计算 SHA-256 清单。
+"""
+
 from __future__ import annotations
 
 import csv
@@ -44,13 +50,14 @@ ForecastProvider = Callable[..., Sequence[Mapping[str, object]]]
 
 @dataclass(frozen=True)
 class EnergyInterval:
-    """One hourly energy interval expressed by its UTC start and end instants."""
+    """一个以 UTC 起止时刻表示的一小时能源区间。"""
 
     interval_start_utc: str
     interval_end_utc: str
 
 
 def _timestamp(value: object, *, label: str) -> dt.datetime:
+    """把字符串解析为标准 UTC 时间戳，失败时给出可读错误。"""
     try:
         return dt.datetime.strptime(str(value), _TIMESTAMP_FORMAT)
     except (TypeError, ValueError) as error:
@@ -58,11 +65,12 @@ def _timestamp(value: object, *, label: str) -> dt.datetime:
 
 
 def _timestamp_text(value: dt.datetime) -> str:
+    """把 datetime 格式化为标准 UTC 时间戳文本。"""
     return value.strftime(_TIMESTAMP_FORMAT)
 
 
 def to_energy_interval(row: Mapping[str, object]) -> EnergyInterval:
-    """Convert an hourly end timestamp to its preceding one-hour interval."""
+    """把小时结束时间戳转换为它前面的那个一小时区间。"""
 
     end = _timestamp(row.get("timestamp_utc"), label="timestamp_utc")
     return EnergyInterval(
@@ -72,7 +80,7 @@ def to_energy_interval(row: Mapping[str, object]) -> EnergyInterval:
 
 
 def day_ahead_cutoff_utc(forecast_target_end_utc: str) -> str:
-    """Return the pre-registered 18:00 Central cutoff before delivery day."""
+    """返回交割日前一天 18:00（America/Chicago）的预注册日前截止时刻。"""
 
     target_utc = _timestamp(
         forecast_target_end_utc, label="forecast_target_end_utc"
@@ -87,6 +95,7 @@ def day_ahead_cutoff_utc(forecast_target_end_utc: str) -> str:
 
 
 def _ordered_rows(rows: Iterable[Mapping[str, object]]) -> list[Mapping[str, object]]:
+    """按时间戳排序并校验唯一、逐小时连续。"""
     ordered = sorted(
         rows, key=lambda row: _timestamp(row.get("timestamp_utc"), label="timestamp_utc")
     )
@@ -105,6 +114,7 @@ def _ordered_rows(rows: Iterable[Mapping[str, object]]) -> list[Mapping[str, obj
 def _forecast_by_target(
     forecast_rows: Iterable[Mapping[str, object]],
 ) -> dict[str, Mapping[str, object]]:
+    """把预测行按目标小时组织，并校验截止时刻与方法是否符合注册规则。"""
     selected: dict[str, Mapping[str, object]] = {}
     for row in forecast_rows:
         target = _timestamp(
@@ -127,6 +137,7 @@ def _forecast_by_target(
 
 
 def _window_id(window_start: dt.date) -> str:
+    """按窗口起点构造文件名中的稳定标识（含残留的 d168/h3 后缀）。"""
     return (
         f"{window_start.isoformat()}_30d_d{MAX_BATCH_DURATION_HOURS}"
         f"_h{COMPLETION_SLACK_HOURS}"
@@ -141,6 +152,7 @@ def _output_row(
     period_role: str,
     forecast: Mapping[str, object] | None,
 ) -> dict[str, object]:
+    """把一条来源行整理成符合正式 schema 的输出行。"""
     interval = to_energy_interval(source_row)
     result: dict[str, object] = {
         "window_id": window_id,
@@ -165,7 +177,7 @@ def build_study_window_rows(
     forecast_rows: Iterable[Mapping[str, object]] = (),
     require_forecast_coverage: bool = False,
 ) -> list[dict[str, object]]:
-    """Build one context/core/tail input without shifting ERCOT timestamps."""
+    """构造一个 context/core/tail 输入，不平移任何 ERCOT 时间戳。"""
 
     annual = _ordered_rows(annual_2025)
     combined = _ordered_rows([*december_2024, *annual])
@@ -247,7 +259,7 @@ def build_study_window_rows(
 
 
 def sha256_file(path: Path) -> str:
-    """Return the uppercase SHA-256 digest for one materialized input."""
+    """返回一个已物化输入文件的大写 SHA-256 摘要。"""
 
     digest = hashlib.sha256()
     with path.open("rb") as source_file:
@@ -257,6 +269,7 @@ def sha256_file(path: Path) -> str:
 
 
 def _write_csv(path: Path, rows: Sequence[Mapping[str, object]]) -> None:
+    """按正式列顺序写出 CSV。"""
     with path.open("w", encoding="utf-8", newline="") as output_file:
         writer = csv.DictWriter(
             output_file,
@@ -268,6 +281,7 @@ def _write_csv(path: Path, rows: Sequence[Mapping[str, object]]) -> None:
 
 
 def _validate_source_hashes(source_hashes: Mapping[str, str]) -> dict[str, str]:
+    """校验来源哈希使用稳定 ID 且是合法 SHA-256，返回排序后的结果。"""
     validated: dict[str, str] = {}
     for source_id, digest in source_hashes.items():
         if not source_id or "/" in source_id or "\\" in source_id:
@@ -287,6 +301,7 @@ def _window_forecasts(
     forecast_provider: ForecastProvider,
     ridge_alphas: Mapping[str, float],
 ) -> list[Mapping[str, object]]:
+    """为一个窗口的所有交割日生成预测行。"""
     delivery_dates = sorted(
         {
             str(row["local_date"])
@@ -322,7 +337,7 @@ def write_study_inputs(
     source_hashes: Mapping[str, str],
     forecast_provider: ForecastProvider = forecast_delivery_day,
 ) -> dict[str, object]:
-    """Write four fixed inputs with leakage-free forecasts for core and tail only."""
+    """物化四个固定窗口输入，仅为核心期与结算尾生成无泄漏预测。"""
 
     validation = validate_ridge_2024(eia_history)
     ridge_alphas = {

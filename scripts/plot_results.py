@@ -1,4 +1,4 @@
-"""Generate result figures for the paper from Jan 2025 sweeps."""
+"""基于 Jan 2025 扫参结果生成论文插图。"""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from alibaba2018_dro.inputs import DATA, build_hourly_input
+from alibaba2018_dro.inputs import DATA_PROCESSED, build_hourly_input
 from alibaba2018_dro.scheduler import (
     solve_batch_shift,
     sweep_bess_power,
@@ -31,9 +31,9 @@ FIGURES = Path(__file__).resolve().parents[1] / "docs" / "figures"
 
 def _jan_inputs():
     return build_hourly_input(
-        DATA / "energy" / "windows" / "2025-01-01_30d_d168_h3_energy.csv",
-        DATA / "workload" / "generated_envelope_30d.csv",
-        DATA / "workload" / "workload_stats.json",
+        DATA_PROCESSED / "energy" / "windows" / "2025-01-01_30d_d168_h3_energy.csv",
+        DATA_PROCESSED / "workload" / "generated_envelope_30d.csv",
+        DATA_PROCESSED / "workload" / "workload_stats.json",
     )
 
 
@@ -49,7 +49,7 @@ def main() -> None:
     inputs = _jan_inputs()
     FIGURES.mkdir(parents=True, exist_ok=True)
 
-    # Fig 1: gamma tradeoff
+    # 图 1：算力侧/能源侧鲁棒预算的保守性—可靠性折中
     gamma_rows = sweep_robustness_budget(
         inputs,
         g_max_fraction=0.8,
@@ -76,7 +76,7 @@ def main() -> None:
     plt.savefig(FIGURES / "fig_gamma_ro.png", dpi=160)
     plt.close()
 
-    # Fig 2: BESS and PV sensitivity (two panels)
+    # 图 2：BESS 功率与 PV 容量敏感性（双面板）
     bess_rows = sweep_bess_power(
         inputs,
         g_max_fraction=0.8,
@@ -121,7 +121,7 @@ def main() -> None:
     fig.savefig(FIGURES / "fig_bess_pv.png", dpi=160)
     plt.close(fig)
 
-    # Fig 3: grid limit and ramp (two panels)
+    # 图 3：并网功率上限与爬坡上限敏感性（双面板）
     gmax_rows = sweep_grid_limit(
         inputs, g_max_fractions=[0.5, 0.6, 0.8, 1.0, 1.2]
     )

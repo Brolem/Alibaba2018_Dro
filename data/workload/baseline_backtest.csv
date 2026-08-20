@@ -1,4 +1,0 @@
-method,cost_reduction,pv_overload_rate
-deterministic,0.3832103755066786,1.0
-SAA(20),0.3582980721602733,0.194
-robust(Gamma_pv=72),0.3670494991788975,0.0

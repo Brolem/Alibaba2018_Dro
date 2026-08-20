@@ -1,4 +1,4 @@
-"""Leakage-free, researcher-constructed ERCO signal forecasts."""
+"""无泄漏、由研究者自行构造的 ERCO 信号预测器。"""
 
 from __future__ import annotations
 
@@ -36,6 +36,7 @@ HourIndex = dict[tuple[str, int], tuple[list[dt.datetime], list[float]]]
 
 
 def _timestamp(value: object, *, label: str) -> dt.datetime:
+    """解析标准 UTC 时间戳。"""
     try:
         return dt.datetime.strptime(str(value), TIMESTAMP_FORMAT).replace(
             tzinfo=dt.timezone.utc
@@ -45,10 +46,12 @@ def _timestamp(value: object, *, label: str) -> dt.datetime:
 
 
 def _timestamp_text(value: dt.datetime) -> str:
+    """把 datetime 格式化为 UTC 时间戳文本。"""
     return value.astimezone(dt.timezone.utc).strftime(TIMESTAMP_FORMAT)
 
 
 def _number(value: object, *, label: str) -> float:
+    """把值解析为有限数值。"""
     try:
         number = float(value)
     except (TypeError, ValueError) as error:
@@ -61,6 +64,7 @@ def _number(value: object, *, label: str) -> float:
 def _history_by_timestamp(
     history: Sequence[Mapping[str, object]],
 ) -> dict[dt.datetime, dict[str, float]]:
+    """把历史序列按时间戳索引，并校验唯一性。"""
     result: dict[dt.datetime, dict[str, float]] = {}
     for row in history:
         timestamp = _timestamp(row.get("timestamp_utc"), label="timestamp_utc")
@@ -78,6 +82,7 @@ def _history_by_timestamp(
 
 
 def _interval_endpoints(delivery_date: dt.date) -> list[dt.datetime]:
+    """返回某个交割日所有小时区间的结束 UTC 时刻。"""
     local_start = dt.datetime.combine(delivery_date, dt.time(), tzinfo=CENTRAL)
     local_stop = dt.datetime.combine(
         delivery_date + dt.timedelta(days=1), dt.time(), tzinfo=CENTRAL
@@ -89,6 +94,7 @@ def _interval_endpoints(delivery_date: dt.date) -> list[dt.datetime]:
 
 
 def _target_for_hour(delivery_date: dt.date, local_start_hour: int) -> dt.datetime | None:
+    """返回某个当地起始小时对应的目标结束时刻。"""
     for endpoint in _interval_endpoints(delivery_date):
         if (endpoint.astimezone(CENTRAL) - dt.timedelta(hours=1)).hour == local_start_hour:
             return endpoint
@@ -96,6 +102,7 @@ def _target_for_hour(delivery_date: dt.date, local_start_hour: int) -> dt.dateti
 
 
 def _cutoff_for_delivery_date(delivery_date: dt.date) -> dt.datetime:
+    """返回某个交割日对应的日前截止时刻（前一天 18:00 Central）。"""
     cutoff_local = dt.datetime.combine(
         delivery_date - dt.timedelta(days=1),
         dt.time(18),
@@ -111,6 +118,7 @@ def _same_hour_observations(
     local_start_hour: int,
     column: str,
 ) -> list[float]:
+    """返回截止时刻之前、指定当地起始小时的同小时历史观测。"""
     timestamps, values = hour_index.get((column, local_start_hour), ([], []))
     return values[:bisect_right(timestamps, known_end)]
 
@@ -118,6 +126,7 @@ def _same_hour_observations(
 def _build_hour_index(
     values_by_timestamp: Mapping[dt.datetime, Mapping[str, float]],
 ) -> HourIndex:
+    """按 (信号列, 当地起始小时) 建索引，便于快速取同小时历史。"""
     index: HourIndex = {}
     for timestamp in sorted(values_by_timestamp):
         local_start_hour = (timestamp.astimezone(CENTRAL) - dt.timedelta(hours=1)).hour
@@ -136,6 +145,7 @@ def _feature_vector(
     target_end: dt.datetime,
     column: str,
 ) -> np.ndarray | None:
+    """为某个目标小时构造特征向量；历史不足时返回 None。"""
     recent: list[float] = []
     for offset in range(23, -1, -1):
         value = values_by_timestamp.get(known_end - dt.timedelta(hours=offset), {}).get(
@@ -179,6 +189,7 @@ def _training_data(
     target_end: dt.datetime,
     column: str,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """构造训练特征、训练目标与待预测特征。"""
     local_start_hour = (target_end.astimezone(CENTRAL) - dt.timedelta(hours=1)).hour
     rows: list[np.ndarray] = []
     targets: list[float] = []
@@ -228,6 +239,7 @@ def _ridge_prediction(
     *,
     alpha: float,
 ) -> float:
+    """用带截距的标准 Ridge 回归做一次点预测。"""
     mean = features.mean(axis=0)
     scale = features.std(axis=0)
     scale[scale == 0.0] = 1.0
@@ -244,6 +256,7 @@ def _ridge_prediction(
 
 
 def _is_local_night(target_end: dt.datetime) -> bool:
+    """判断目标小时是否处于当地夜间（用于夜间光伏强制置零）。"""
     local_start_hour = (target_end.astimezone(CENTRAL) - dt.timedelta(hours=1)).hour
     return local_start_hour < 6 or local_start_hour >= 20
 
@@ -255,6 +268,7 @@ def _forecast_rows(
     delivery_date: dt.date,
     alphas: Mapping[str, float],
 ) -> list[dict[str, object]]:
+    """为一个交割日逐小时生成预测行。"""
     known_end = cutoff - dt.timedelta(hours=FORECAST_INFORMATION_PROTECTION_HOURS)
     hour_index = _build_hour_index(values_by_timestamp)
     rows: list[dict[str, object]] = []
@@ -292,7 +306,7 @@ def _forecast_rows(
 def select_ridge_alpha(
     history: Sequence[Mapping[str, object]],
 ) -> dict[str, float]:
-    """Select one alpha per signal using only fixed 2024 rolling origins."""
+    """仅用固定 2024 滚动起点，为每个信号选择 alpha。"""
 
     validation = validate_ridge_2024(history)
     return {
@@ -304,7 +318,7 @@ def select_ridge_alpha(
 def validate_ridge_2024(
     history: Sequence[Mapping[str, object]],
 ) -> dict[str, object]:
-    """Evaluate fixed monthly rolling origins and the 28-day median baseline."""
+    """在固定月度滚动起点上评估 Ridge，并与 28 天中位数基线比较。"""
 
     values_by_timestamp = _history_by_timestamp(history)
     hour_index = _build_hour_index(values_by_timestamp)
@@ -420,7 +434,7 @@ def forecast_delivery_day(
     delivery_date: str,
     alphas: Mapping[str, float] | None = None,
 ) -> list[dict[str, object]]:
-    """Forecast every actual delivery hour using only the protected history."""
+    """只用保护期内的历史，预测交割日每个实际小时。"""
 
     cutoff = _timestamp(cutoff_utc, label="cutoff_utc")
     try:
@@ -446,7 +460,7 @@ def median_baseline(
     cutoff_utc: str,
     delivery_date: str,
 ) -> list[dict[str, object]]:
-    """Return the protected 28-day same-hour median baseline."""
+    """返回保护期内的 28 天同小时中位数基线。"""
 
     cutoff = _timestamp(cutoff_utc, label="cutoff_utc")
     try:

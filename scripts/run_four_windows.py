@@ -10,7 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from alibaba2018_dro.inputs import DATA, build_hourly_input
+from alibaba2018_dro.inputs import DATA_PROCESSED, DATA_RESULTS, build_hourly_input
 from alibaba2018_dro.scheduler import (
     _peak_load,
     _pv_profile,
@@ -52,13 +52,13 @@ def _pv_self_use(inputs, result, pv_capacity_mw):
 
 
 def main() -> None:
-    envelope = DATA / "workload" / "generated_envelope_30d.csv"
-    stats = DATA / "workload" / "workload_stats.json"
+    envelope = DATA_PROCESSED / "workload" / "generated_envelope_30d.csv"
+    stats = DATA_PROCESSED / "workload" / "workload_stats.json"
     rows: list[dict] = []
 
     for window_start in WINDOWS:
         window = (
-            DATA / "energy" / "windows" / f"{window_start}_30d_d168_h3_energy.csv"
+            DATA_PROCESSED / "energy" / "windows" / f"{window_start}_30d_d168_h3_energy.csv"
         )
         inputs = build_hourly_input(window, envelope, stats)
         p_must = inputs[0].online_mw + inputs[0].base_mw
@@ -108,7 +108,7 @@ def main() -> None:
                 f"peak={m[2]:.3f}, ramp={m[3]:.3f}, pv_self_use={self_use:.4f}"
             )
 
-    out = DATA / "workload" / "four_windows_summary.csv"
+    out = DATA_RESULTS / "four_windows_summary.csv"
     with out.open("w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
         writer.writeheader()
