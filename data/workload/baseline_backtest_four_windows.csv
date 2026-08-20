@@ -1,0 +1,13 @@
+window,method,cost_reduction,pv_overload_rate
+2025-01-01,deterministic,0.3832,1.0
+2025-01-01,SAA(20),0.3583,0.194
+2025-01-01,robust(Gamma_pv=72),0.367,0.0
+2025-04-01,deterministic,0.4037,1.0
+2025-04-01,SAA(20),0.3644,0.332
+2025-04-01,robust(Gamma_pv=72),0.3867,0.0
+2025-07-01,deterministic,0.3293,1.0
+2025-07-01,SAA(20),0.3025,0.23
+2025-07-01,robust(Gamma_pv=72),0.3184,0.0
+2025-10-01,deterministic,0.3892,1.0
+2025-10-01,SAA(20),0.3492,0.252
+2025-10-01,robust(Gamma_pv=72),0.3727,0.0

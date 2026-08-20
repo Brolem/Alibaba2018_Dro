@@ -1,4 +1,4 @@
-"""对照基线的样本外回测：比较确定性 / SAA / 逐小时预算鲁棒的 PV 越限率。"""
+"""对照基线的样本外回测（四窗口）：确定性 / SAA / 逐小时预算鲁棒的 PV 越限率。"""
 
 from __future__ import annotations
 
@@ -22,9 +22,16 @@ from alibaba2018_dro.scheduler import (
 )
 
 
-def main() -> None:
+WINDOWS = ["2025-01-01", "2025-04-01", "2025-07-01", "2025-10-01"]
+EPS = 0.243
+REALIZATIONS = 500
+
+
+def evaluate_window(window_start: str) -> list[dict]:
+    """对单个窗口求解三个方案并回测，返回每方法的 (成本下降, PV 越限率)。"""
+
     inputs = build_hourly_input(
-        DATA / "energy" / "windows" / "2025-01-01_30d_d168_h3_energy.csv",
+        DATA / "energy" / "windows" / f"{window_start}_30d_d168_h3_energy.csv",
         DATA / "workload" / "generated_envelope_30d.csv",
         DATA / "workload" / "workload_stats.json",
     )
@@ -40,46 +47,65 @@ def main() -> None:
         pv_capacity_mw=1.0 * p_must,
     )
 
-    # 三个方案
-    det = solve_batch_shift(inputs, **kwargs)                 # 确定性：假设 PV 完全按预测
-    rob = solve_robust_budgeted(inputs, gamma_pv=72, **kwargs)  # 鲁棒：预留 PV 短缺
-    saa = solve_saa(inputs, scenarios=20, seed=0, **kwargs)     # SAA：按平均短缺规划
+    det = solve_batch_shift(inputs, **kwargs)
+    rob = solve_robust_budgeted(inputs, gamma_pv=72, **kwargs)
+    saa = solve_saa(inputs, scenarios=20, seed=0, **kwargs)
 
-    eps = 0.243
-    xi_bar = eps / 2.0  # SAA 场景的平均短缺因子
+    xi_bar = EPS / 2.0
     pv_nom = _pv_profile(inputs, kwargs["pv_capacity_mw"])
-
     rng = np.random.default_rng(0)
-    realizations = 500
     det_overload = saa_overload = rob_overload = 0
-    for _ in range(realizations):
-        xi = rng.uniform(0.0, eps)  # 全局 PV 短缺因子（每小时相同，便于解释）
-        # 确定性：假设短缺 0，实际短缺 xi
+    for _ in range(REALIZATIONS):
+        xi = rng.uniform(0.0, EPS)
         if any(det.grid[t] + xi * pv_nom[t] > g_max + 1e-9 for t in range(len(inputs))):
             det_overload += 1
-        # 鲁棒：名义平衡同确定性，但并网预留了 eps·pv_nom
         if any(rob.grid[t] + xi * pv_nom[t] > g_max + 1e-9 for t in range(len(inputs))):
             rob_overload += 1
-        # SAA：按平均短缺 xi_bar 规划，实际短缺 xi
         if any(
             saa.grid[t] + (xi - xi_bar) * pv_nom[t] > g_max + 1e-9
             for t in range(len(inputs))
         ):
             saa_overload += 1
 
-    rows = [
-        ("deterministic", det.cost_reduction, det_overload / realizations),
-        ("SAA(20)", saa.cost_reduction, saa_overload / realizations),
-        ("robust(Gamma_pv=72)", rob.cost_reduction, rob_overload / realizations),
+    return [
+        {
+            "window": window_start,
+            "method": "deterministic",
+            "cost_reduction": round(det.cost_reduction, 4),
+            "pv_overload_rate": round(det_overload / REALIZATIONS, 4),
+        },
+        {
+            "window": window_start,
+            "method": "SAA(20)",
+            "cost_reduction": round(saa.cost_reduction, 4),
+            "pv_overload_rate": round(saa_overload / REALIZATIONS, 4),
+        },
+        {
+            "window": window_start,
+            "method": "robust(Gamma_pv=72)",
+            "cost_reduction": round(rob.cost_reduction, 4),
+            "pv_overload_rate": round(rob_overload / REALIZATIONS, 4),
+        },
     ]
-    out = DATA / "workload" / "baseline_backtest.csv"
-    with out.open("w", encoding="utf-8", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["method", "cost_reduction", "pv_overload_rate"])
-        w.writerows(rows)
 
-    for method, reduction, overload in rows:
-        print(f"{method}: cost_reduction={reduction:.4f}, pv_overload_rate={overload:.4f}")
+
+def main() -> None:
+    all_rows: list[dict] = []
+    for window in WINDOWS:
+        rows = evaluate_window(window)
+        all_rows.extend(rows)
+        for r in rows:
+            print(
+                f"{r['window']} {r['method']}: "
+                f"cost_reduction={r['cost_reduction']:.4f}, "
+                f"pv_overload_rate={r['pv_overload_rate']:.4f}"
+            )
+
+    out = DATA / "workload" / "baseline_backtest_four_windows.csv"
+    with out.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(all_rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(all_rows)
     print("written:", out)
 
 
