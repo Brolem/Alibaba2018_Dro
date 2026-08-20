@@ -60,6 +60,8 @@ def solve_batch_shift(
     pv_relative_error: float = 0.243,
     robustness_budget: float = 0.0,
     energy_uncertainty_fraction: float = 0.079,
+    objective: str = "cost",
+    cost_upper_bound: float | None = None,
 ) -> BatchShiftResult:
     """求解一次日前调度。
 
@@ -169,10 +171,29 @@ def solve_batch_shift(
             previous = current
 
     # 目标：最小化总购电成本（电价 × 每小时购电功率）
-    model.setObjective(
-        sum(item.dam_lz_houston_usd_per_mwh * p_grid[item.hour] for item in inputs),
-        "minimize",
-    )
+    if objective == "cost":
+        objective_expr = sum(
+            item.dam_lz_houston_usd_per_mwh * p_grid[item.hour] for item in inputs
+        )
+    elif objective == "carbon":
+        objective_expr = sum(
+            item.forecast_consumed_co2_lbs_per_kwh * p_grid[item.hour]
+            for item in inputs
+        )
+    else:
+        raise ValueError(f"unknown objective: {objective}")
+
+    if cost_upper_bound is not None:
+        model.addCons(
+            sum(
+                item.dam_lz_houston_usd_per_mwh * p_grid[item.hour]
+                for item in inputs
+            )
+            <= cost_upper_bound,
+            name="cost_guardrail",
+        )
+
+    model.setObjective(objective_expr, "minimize")
     model.optimize()
 
     if model.getStatus() != "optimal":
@@ -202,6 +223,26 @@ def solve_batch_shift(
         bess_charge=charge_values,
         bess_discharge=discharge_values,
         feasible=True,
+    )
+
+
+def solve_lexicographic(
+    inputs: list[HourlyInput],
+    *,
+    cost_guardrail: float = 0.01,
+    **kwargs,
+) -> BatchShiftResult:
+    """词典序：先 min 成本，再在 (1+cost_guardrail) 成本保护带内 min 碳。"""
+
+    first = solve_batch_shift(inputs, objective="cost", **kwargs)
+    if not first.feasible:
+        return first
+    upper_bound = first.optimal_cost * (1.0 + cost_guardrail)
+    return solve_batch_shift(
+        inputs,
+        objective="carbon",
+        cost_upper_bound=upper_bound,
+        **kwargs,
     )
 
 
