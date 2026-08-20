@@ -10,6 +10,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+import numpy as np
+
 from .inputs import HourlyInput
 
 try:  # PySCIPOpt 只在 scip_env 里；这样本模块在其它环境也能被 import（只是不能求解）。
@@ -243,6 +245,233 @@ def solve_lexicographic(
         objective="carbon",
         cost_upper_bound=upper_bound,
         **kwargs,
+    )
+
+
+def solve_robust_budgeted(
+    inputs: list[HourlyInput],
+    *,
+    g_max_mw: float,
+    r_max_mw: float,
+    p_grid_initial_mw: float,
+    bess_power_mw: float | None = None,
+    bess_energy_mwh: float | None = None,
+    bess_efficiency: float = 0.90,
+    soc_min: float = 0.10,
+    soc_max: float = 0.90,
+    soc_initial: float = 0.50,
+    pv_capacity_mw: float | None = None,
+    pv_relative_error: float = 0.243,
+    gamma_pv: float = 1.0,
+    robustness_budget: float = 0.0,
+    energy_uncertainty_fraction: float = 0.079,
+) -> BatchShiftResult:
+    """逐小时 PV 预算鲁棒（能源侧 Bertsimas–Sim robust counterpart）。
+
+    不确定集：PV 短缺 δ_t ∈ [0, ε·π_t^nom]，且 Σ δ_t/(ε·π_t^nom) ≤ Γ_pv。
+    鲁棒目标 = 名义成本 + “Γ_pv 个最大价格加权短缺之和”，用辅助变量 w、r_t 线性化：
+        min Σ p_t g_t + Γ_pv·w + Σ r_t
+        s.t. w + r_t ≥ p_t·ε·π_t^nom,  ∀t
+    并网鲁棒：g_t + ε·π_t^nom ≤ G_max（任一小时都可能发生全额短缺）。
+    """
+
+    if Model is None:
+        raise RuntimeError("pyscipopt is required; run inside scip_env")
+
+    model = Model("robust_budgeted")
+    model.hideOutput()
+    hours = len(inputs)
+    p_must = inputs[0].online_mw + inputs[0].base_mw
+    pv_nom = _pv_profile(inputs, pv_capacity_mw) if pv_capacity_mw else [0.0] * hours
+
+    batch = {
+        t: model.addVar(lb=0.0, ub=inputs[t].batch_window_mwh, name=f"batch_{t}")
+        for t in range(hours)
+    }
+    g_nom = {t: model.addVar(lb=0.0, name=f"g_{t}") for t in range(hours)}
+
+    p_ch: dict[int, object] = {}
+    p_dis: dict[int, object] = {}
+    if bess_power_mw is not None:
+        eta = math.sqrt(bess_efficiency)
+        p_ch = {t: model.addVar(lb=0.0, ub=bess_power_mw, name=f"pch_{t}") for t in range(hours)}
+        p_dis = {t: model.addVar(lb=0.0, ub=bess_power_mw, name=f"pdis_{t}") for t in range(hours)}
+        energy = {
+            t: model.addVar(lb=soc_min * bess_energy_mwh, ub=soc_max * bess_energy_mwh, name=f"e_{t}")
+            for t in range(hours + 1)
+        }
+        model.addCons(energy[0] == soc_initial * bess_energy_mwh)
+        for t in range(hours):
+            model.addCons(energy[t + 1] == energy[t] + eta * p_ch[t] - p_dis[t] / eta)
+        model.addCons(energy[hours] == energy[0])
+
+    # 名义功率平衡：g_t = P_must + batch + 充 − 放 − PV_nom
+    for t in range(hours):
+        rhs = p_must + batch[t] - pv_nom[t]
+        if bess_power_mw is not None:
+            rhs = rhs + p_ch[t] - p_dis[t]
+        model.addCons(g_nom[t] == rhs, name=f"balance_{t}")
+
+    # 鲁棒并网：名义 + 全额短缺
+    for t in range(hours):
+        model.addCons(
+            g_nom[t] + pv_relative_error * pv_nom[t] <= g_max_mw,
+            name=f"grid_limit_{t}",
+        )
+
+    # 爬坡（名义购电）
+    previous = p_grid_initial_mw
+    for t in range(hours):
+        if previous is not None:
+            model.addCons(g_nom[t] - previous <= r_max_mw, name=f"ramp_up_{t}")
+            model.addCons(g_nom[t] - previous >= -r_max_mw, name=f"ramp_down_{t}")
+        previous = g_nom[t]
+
+    # 批处理能量守恒 + 算力侧 Γ（标量，保留）
+    total_energy = sum(item.batch_baseline_mwh for item in inputs)
+    total_energy *= 1.0 + robustness_budget * energy_uncertainty_fraction
+    model.addCons(sum(batch[t] for t in range(hours)) == total_energy)
+
+    # 保护函数辅助变量
+    w = model.addVar(lb=0.0, name="w")
+    r = {t: model.addVar(lb=0.0, name=f"r_{t}") for t in range(hours)}
+    for t in range(hours):
+        model.addCons(
+            w + r[t] >= inputs[t].dam_lz_houston_usd_per_mwh * pv_relative_error * pv_nom[t],
+            name=f"protect_{t}",
+        )
+
+    # 鲁棒目标：名义成本 + Γ_pv 个最大短缺
+    model.setObjective(
+        sum(inputs[t].dam_lz_houston_usd_per_mwh * g_nom[t] for t in range(hours))
+        + gamma_pv * w
+        + sum(r[t] for t in range(hours)),
+        "minimize",
+    )
+    model.optimize()
+
+    if model.getStatus() != "optimal":
+        return _infeasible_result()
+
+    batch_values = [model.getVal(batch[t]) for t in range(hours)]
+    grid_values = [model.getVal(g_nom[t]) for t in range(hours)]
+    charge_values = [model.getVal(p_ch[t]) if p_ch else 0.0 for t in range(hours)]
+    discharge_values = [model.getVal(p_dis[t]) if p_dis else 0.0 for t in range(hours)]
+    # 鲁棒成本 = 名义成本 + 保护函数（最坏情形成本），即目标函数值
+    optimal_cost = model.getObjVal()
+    baseline_cost = sum(
+        item.dam_lz_houston_usd_per_mwh * (p_must + item.batch_baseline_mwh)
+        for item in inputs
+    )
+    return BatchShiftResult(
+        baseline_cost=baseline_cost,
+        optimal_cost=optimal_cost,
+        cost_reduction=(baseline_cost - optimal_cost) / baseline_cost if baseline_cost else 0.0,
+        batch=batch_values,
+        grid=grid_values,
+        bess_charge=charge_values,
+        bess_discharge=discharge_values,
+        feasible=True,
+    )
+
+
+def solve_saa(
+    inputs: list[HourlyInput],
+    *,
+    scenarios: int,
+    seed: int,
+    g_max_mw: float,
+    r_max_mw: float,
+    p_grid_initial_mw: float,
+    bess_power_mw: float | None = None,
+    bess_energy_mwh: float | None = None,
+    bess_efficiency: float = 0.90,
+    soc_min: float = 0.10,
+    soc_max: float = 0.90,
+    soc_initial: float = 0.50,
+    pv_capacity_mw: float | None = None,
+    pv_relative_error: float = 0.243,
+) -> BatchShiftResult:
+    """样本平均近似（SAA）：多场景期望成本，共享批处理/BESS，逐场景购电。"""
+
+    if Model is None:
+        raise RuntimeError("pyscipopt is required; run inside scip_env")
+
+    model = Model("saa")
+    model.hideOutput()
+    hours = len(inputs)
+    p_must = inputs[0].online_mw + inputs[0].base_mw
+    pv_nom = _pv_profile(inputs, pv_capacity_mw) if pv_capacity_mw else [0.0] * hours
+    rng = np.random.default_rng(seed)
+    # 场景短缺因子 z_s ∈ [0, ε]，按均匀分布采样
+    z = {s: rng.uniform(0.0, pv_relative_error, size=hours) for s in range(scenarios)}
+
+    batch = {t: model.addVar(lb=0.0, ub=inputs[t].batch_window_mwh, name=f"batch_{t}") for t in range(hours)}
+    p_ch: dict[int, object] = {}
+    p_dis: dict[int, object] = {}
+    if bess_power_mw is not None:
+        eta = math.sqrt(bess_efficiency)
+        p_ch = {t: model.addVar(lb=0.0, ub=bess_power_mw, name=f"pch_{t}") for t in range(hours)}
+        p_dis = {t: model.addVar(lb=0.0, ub=bess_power_mw, name=f"pdis_{t}") for t in range(hours)}
+        energy = {
+            t: model.addVar(lb=soc_min * bess_energy_mwh, ub=soc_max * bess_energy_mwh, name=f"e_{t}")
+            for t in range(hours + 1)
+        }
+        model.addCons(energy[0] == soc_initial * bess_energy_mwh)
+        for t in range(hours):
+            model.addCons(energy[t + 1] == energy[t] + eta * p_ch[t] - p_dis[t] / eta)
+        model.addCons(energy[hours] == energy[0])
+
+    total_energy = sum(item.batch_baseline_mwh for item in inputs)
+    model.addCons(sum(batch[t] for t in range(hours)) == total_energy)
+
+    g = {s: {t: model.addVar(lb=0.0, name=f"g_{s}_{t}") for t in range(hours)} for s in range(scenarios)}
+    for s in range(scenarios):
+        previous = p_grid_initial_mw
+        for t in range(hours):
+            rhs = p_must + batch[t] - pv_nom[t] * (1.0 - z[s][t])
+            if bess_power_mw is not None:
+                rhs = rhs + p_ch[t] - p_dis[t]
+            model.addCons(g[s][t] == rhs, name=f"balance_{s}_{t}")
+            model.addCons(g[s][t] <= g_max_mw, name=f"limit_{s}_{t}")
+            if previous is not None:
+                model.addCons(g[s][t] - previous <= r_max_mw, name=f"ramp_up_{s}_{t}")
+                model.addCons(g[s][t] - previous >= -r_max_mw, name=f"ramp_down_{s}_{t}")
+            previous = g[s][t]
+
+    # 期望成本
+    model.setObjective(
+        (1.0 / scenarios)
+        * sum(
+            inputs[t].dam_lz_houston_usd_per_mwh * g[s][t]
+            for s in range(scenarios)
+            for t in range(hours)
+        ),
+        "minimize",
+    )
+    model.optimize()
+
+    if model.getStatus() != "optimal":
+        return _infeasible_result()
+
+    batch_values = [model.getVal(batch[t]) for t in range(hours)]
+    grid_values = [sum(model.getVal(g[s][t]) for s in range(scenarios)) / scenarios for t in range(hours)]
+    charge_values = [model.getVal(p_ch[t]) if p_ch else 0.0 for t in range(hours)]
+    discharge_values = [model.getVal(p_dis[t]) if p_dis else 0.0 for t in range(hours)]
+    optimal_cost = sum(inputs[t].dam_lz_houston_usd_per_mwh * grid_values[t] for t in range(hours))
+    baseline_cost = sum(
+        item.dam_lz_houston_usd_per_mwh * (p_must + item.batch_baseline_mwh)
+        for item in inputs
+    )
+    return BatchShiftResult(
+        baseline_cost=baseline_cost,
+        optimal_cost=optimal_cost,
+        cost_reduction=(baseline_cost - optimal_cost) / baseline_cost if baseline_cost else 0.0,
+        batch=batch_values,
+        grid=grid_values,
+        bess_charge=charge_values,
+        bess_discharge=discharge_values,
+        feasible=True,
     )
 
 

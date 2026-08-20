@@ -85,6 +85,34 @@ $$\pi_t = \pi_t^{\text{nom}}\,(1 - \Gamma_{pv}\,\varepsilon), \qquad
 
 其中 $s_t$ 是 ERCO 系统太阳预测、$\Pi^{\text{cap}}$ 是本地 PV 容量、$\varepsilon \approx 24.3\%$（2024 太阳能 NMAE）、$\Gamma_{pv}\in[0,1]$。
 
+### 3.3 逐小时预算鲁棒（能源侧 Bertsimas–Sim robust counterpart）
+
+不确定集：PV 短缺 $\delta_t \in [0,\ \varepsilon\pi_t^{\text{nom}}]$，预算 $\sum_t \delta_t / (\varepsilon\pi_t^{\text{nom}}) \le \Gamma_{pv}$。
+
+名义购电 $g_t^{\text{nom}} = L_t - \pi_t^{\text{nom}}$，实际购电 $g_t = g_t^{\text{nom}} + \delta_t$，其中 $L_t = P^{\text{must}} + b_t + c_t - d_t$。
+
+鲁棒目标（最坏情形成本）：
+
+$$\min \sum_t p_t g_t^{\text{nom}} + \Gamma_{pv}\, w + \sum_t r_t$$
+
+$$\text{s.t.}\quad w + r_t \ge p_t\,\varepsilon\,\pi_t^{\text{nom}},\ \forall t;\qquad w,\ r_t \ge 0$$
+
+其中 $w + \sum_t r_t$ 的极小值正是“$\Gamma_{pv}$ 个最大的 $p_t\varepsilon\pi_t^{\text{nom}}$ 之和”（保护函数线性化）。
+
+鲁棒并网：$g_t^{\text{nom}} + \varepsilon\pi_t^{\text{nom}} \le G^{\max},\ \forall t$。
+
+> 注意：这里 $\Gamma_{pv}$ 是“发生全额短缺的小时数预算”（$0\sim 720$），与 §3.2 的标量 $\Gamma_{pv}\in[0,1]$ 语义不同。
+
+### 3.4 样本平均近似（SAA）
+
+$S$ 个场景，短缺因子 $z_t^s \in [0,\varepsilon]$（随机采样）；共享批处理与 BESS，逐场景购电 $g_t^s$：
+
+$$\min \frac{1}{S}\sum_{s=1}^{S}\sum_{t} p_t\, g_t^s$$
+
+$$\text{s.t.}\quad g_t^s = L_t - \pi_t^{\text{nom}}(1 - z_t^s),\quad 0 \le g_t^s \le G^{\max},\ \text{爬坡}$$
+
+这是“here-and-now（批处理/BESS）+ wait-and-see（购电）”的两阶段随机规划。
+
 ## 4. 各种映射
 
 ### 4.1 CPU 任务 → 核需求

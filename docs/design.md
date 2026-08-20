@@ -106,7 +106,7 @@ base_mw           = PUE × N_MACHINES × idle_w_per_machine / 1e6        # 固�
 - 本地 PV 已按“系统太阳形状 × 场景容量”接入；2025 本地剖面仅在审稿要求或时间富余时再重拉。
 - BESS 尺寸/效率/SOC 已按场景实现（效率 90%、SOC 10–90%、初始 50%、能量=2h×功率）；后续补 low/high 效率敏感性。
 - 双侧 Γ-budget RO 已落地（见 results.md §5）；样本外回测已完成（见 results.md §6），证明鲁棒方案降低违约率。
-- 下一阶段方法加固：把 Γ-budget 从“能量缩放”升级为逐小时预算的 robust counterpart / 机会约束；补对照基线（确定性 / SAA / 鲁棒）。
+- 方法加固已完成：逐小时预算鲁棒（`solve_robust_budgeted`，Bertsimas–Sim 保护函数）与 SAA（`solve_saa`）已实现；对照基线见 `scripts/compare_baselines.py` 与 model.md §3.3–3.4。
 
 ## 6. config 参数评审（进行中）
 
