@@ -51,6 +51,8 @@ def solve_batch_shift(
     soc_max: float = 0.90,
     soc_initial: float = 0.50,
     pv_capacity_mw: float | None = None,
+    pv_robustness_budget: float = 0.0,
+    pv_relative_error: float = 0.243,
     robustness_budget: float = 0.0,
     energy_uncertainty_fraction: float = 0.079,
 ) -> BatchShiftResult:
@@ -108,7 +110,10 @@ def solve_batch_shift(
             p_grid[t] = p_grid[t] + p_ch[t] - p_dis[t]
 
     if pv_capacity_mw is not None:
-        pv = _pv_profile(inputs, pv_capacity_mw)
+        effective_capacity = pv_capacity_mw * (
+            1.0 - pv_robustness_budget * pv_relative_error
+        )
+        pv = _pv_profile(inputs, effective_capacity)
         for item in inputs:
             p_grid[item.hour] = p_grid[item.hour] - pv[item.hour]
 
@@ -332,6 +337,42 @@ def sweep_robustness_budget(
             pv_capacity_mw=pv_fraction * p_must,
             robustness_budget=budget,
             energy_uncertainty_fraction=energy_uncertainty_fraction,
+        )
+        rows.append((budget, result.feasible, result.cost_reduction))
+    return rows
+
+
+def sweep_pv_robustness(
+    inputs: list[HourlyInput],
+    *,
+    g_max_fraction: float,
+    r_max_fraction: float,
+    budgets: list[float],
+    pv_relative_error: float = 0.243,
+    bess_power_fraction: float = 0.5,
+    bess_energy_hours: float = 2.0,
+    pv_fraction: float = 1.0,
+) -> list[tuple[float, bool, float]]:
+    """Sweep the energy-side PV robustness budget Gamma_pv."""
+
+    p_peak = _peak_load(inputs)
+    p_must = inputs[0].online_mw + inputs[0].base_mw
+    g_max_mw = g_max_fraction * p_peak
+    r_max_mw = r_max_fraction * p_peak
+    p_grid_initial = p_must + inputs[0].batch_baseline_mwh
+
+    rows: list[tuple[float, bool, float]] = []
+    for budget in budgets:
+        result = solve_batch_shift(
+            inputs,
+            g_max_mw=g_max_mw,
+            r_max_mw=r_max_mw,
+            p_grid_initial_mw=p_grid_initial,
+            bess_power_mw=bess_power_fraction * p_peak,
+            bess_energy_mwh=bess_energy_hours * bess_power_fraction * p_peak,
+            pv_capacity_mw=pv_fraction * p_must,
+            pv_robustness_budget=budget,
+            pv_relative_error=pv_relative_error,
         )
         rows.append((budget, result.feasible, result.cost_reduction))
     return rows

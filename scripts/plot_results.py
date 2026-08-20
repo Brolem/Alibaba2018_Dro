@@ -22,6 +22,7 @@ from alibaba2018_dro.scheduler import (
     sweep_pv_capacity,
     sweep_ramp_limit,
     sweep_robustness_budget,
+    sweep_pv_robustness,
 )
 
 
@@ -51,12 +52,21 @@ def main() -> None:
         r_max_fraction=0.1,
         budgets=[0.0, 0.25, 0.5, 0.75, 1.0],
     )
+    pv_gamma_rows = sweep_pv_robustness(
+        inputs,
+        g_max_fraction=0.8,
+        r_max_fraction=0.1,
+        budgets=[0.0, 0.25, 0.5, 0.75, 1.0],
+    )
     plt.figure(figsize=(5, 3.5))
     g, rd = zip(*_feasible(gamma_rows))
-    plt.plot(g, rd, "o-", color="#1f77b4")
+    pg, prd = zip(*_feasible(pv_gamma_rows))
+    plt.plot(g, rd, "o-", label="compute-side $\\Gamma$", color="#1f77b4")
+    plt.plot(pg, prd, "s-", label="energy-side $\\Gamma_{pv}$", color="#d62728")
     plt.xlabel("Robustness budget $\\Gamma$")
     plt.ylabel("Total cost reduction (%)")
     plt.title("Conservatism-reliability tradeoff")
+    plt.legend()
     plt.grid(alpha=0.3)
     plt.tight_layout()
     plt.savefig(FIGURES / "fig_gamma_ro.png", dpi=160)
