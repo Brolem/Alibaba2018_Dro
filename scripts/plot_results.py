@@ -41,6 +41,10 @@ def _feasible(rows):
     return [(x, rd * 100.0) for x, ok, rd in rows if ok]
 
 
+def _infeasible_x(rows):
+    return [x for x, ok, _rd in rows if not ok]
+
+
 def main() -> None:
     inputs = _jan_inputs()
     FIGURES.mkdir(parents=True, exist_ok=True)
@@ -102,8 +106,12 @@ def main() -> None:
     axes[0].grid(alpha=0.3)
     px, pn = zip(*_feasible([(p, ok, rd) for p, ok, rd, _ in pv_no_bess]))
     axes[1].plot(px, pn, "o-", label="no BESS", color="#d62728")
+    for p in _infeasible_x([(p, ok, rd) for p, ok, rd, _ in pv_no_bess]):
+        axes[1].plot(p, 0, "x", color="#d62728")
     px2, pb = zip(*_feasible([(p, ok, rd) for p, ok, rd, _ in pv_bess]))
     axes[1].plot(px2, pb, "s-", label="BESS 0.5x", color="#1f77b4")
+    for p in _infeasible_x([(p, ok, rd) for p, ok, rd, _ in pv_bess]):
+        axes[1].plot(p, 0, "x", color="#1f77b4")
     axes[1].set_xlabel("PV capacity / $P_{must}$")
     axes[1].set_ylabel("Total cost reduction (%)")
     axes[1].set_title("PV capacity sensitivity")
@@ -123,12 +131,16 @@ def main() -> None:
     fig, axes = plt.subplots(1, 2, figsize=(10, 3.8))
     gx, grd = zip(*_feasible(gmax_rows))
     axes[0].plot(gx, grd, "o-", color="#9467bd")
+    for x in _infeasible_x(gmax_rows):
+        axes[0].plot(x, 0, "x", color="#9467bd")
     axes[0].set_xlabel("$G_{max} / P_{peak}$")
     axes[0].set_ylabel("Total cost reduction (%)")
     axes[0].set_title("Grid connection limit")
     axes[0].grid(alpha=0.3)
     rx, rrd = zip(*_feasible(rmax_rows))
     axes[1].plot(rx, rrd, "o-", color="#8c564b")
+    for x in _infeasible_x(rmax_rows):
+        axes[1].plot(x, 0, "x", color="#8c564b")
     axes[1].set_xlabel("$R_{max} / P_{peak}$ per h")
     axes[1].set_ylabel("Total cost reduction (%)")
     axes[1].set_title("Ramp rate limit")
