@@ -23,6 +23,7 @@ class HourlyInput:
     forecast_erco_solar_generation_mwh: float
     forecast_erco_wind_generation_mwh: float
     forecast_consumed_co2_lbs_per_kwh: float
+    actual_consumed_co2_lbs_per_kwh: float
     online_mw: float
     base_mw: float
     batch_baseline_mwh: float
@@ -101,6 +102,9 @@ def build_hourly_input(
                 ),
                 forecast_consumed_co2_lbs_per_kwh=float(
                     energy_row["forecast_consumed_co2_lbs_per_kwh"] or 0.0
+                ),
+                actual_consumed_co2_lbs_per_kwh=float(
+                    energy_row["erco_consumed_co2_intensity_lbs_per_kwh"] or 0.0
                 ),
                 online_mw=online_mw,
                 base_mw=base_mw,
