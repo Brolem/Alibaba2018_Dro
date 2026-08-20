@@ -8,6 +8,7 @@
 | `design.md` | 实现设计：数据接口、功率模型、不确定集标定、主实验配置、关键决策 | 复现 / 维护 |
 | `model.md` | 数学公式与各类映射（LaTeX） | 写论文 / 复现 |
 | `results.md` | 实验结果：所有表格与图表 | 写论文 |
+| `paper_tables_figures.md` | 论文图表清单：表/图编号与论文结构映射 | 写论文 |
 | `forecasting.md` | 无泄漏时序预测设计 | 预测部分 |
 | `../data/energy/README.md` | 能源数据来源与哈希 | 复现 |
 | `../data/workload/README.md` | Alibaba v2018 下载与字段 | 复现 |
