@@ -1,0 +1,47 @@
+[
+  {
+    "feasible": true,
+    "gamma": 0.0,
+    "gamma_pv": 0.0,
+    "cost_reduction": 0.3832103755066786,
+    "batch_violation_rate": 0.485,
+    "grid_violation_rate": 1.0,
+    "mean_energy_shortfall_mwh": 77.37591442536416
+  },
+  {
+    "feasible": true,
+    "gamma": 0.25,
+    "gamma_pv": 0.25,
+    "cost_reduction": 0.3666810125791714,
+    "batch_violation_rate": 0.395,
+    "grid_violation_rate": 0.76,
+    "mean_energy_shortfall_mwh": 66.82579906169575
+  },
+  {
+    "feasible": true,
+    "gamma": 0.5,
+    "gamma_pv": 0.5,
+    "cost_reduction": 0.34993881965769325,
+    "batch_violation_rate": 0.275,
+    "grid_violation_rate": 0.5575,
+    "mean_energy_shortfall_mwh": 65.42260524131866
+  },
+  {
+    "feasible": true,
+    "gamma": 0.75,
+    "gamma_pv": 0.75,
+    "cost_reduction": 0.33298481797438745,
+    "batch_violation_rate": 0.215,
+    "grid_violation_rate": 0.29,
+    "mean_energy_shortfall_mwh": 55.550612748857645
+  },
+  {
+    "feasible": true,
+    "gamma": 1.0,
+    "gamma_pv": 1.0,
+    "cost_reduction": 0.3158199025191481,
+    "batch_violation_rate": 0.155,
+    "grid_violation_rate": 0.0,
+    "mean_energy_shortfall_mwh": 47.784256641123974
+  }
+]
