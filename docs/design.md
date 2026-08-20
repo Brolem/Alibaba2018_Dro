@@ -60,6 +60,8 @@ base_mw           = PUE × N_MACHINES × idle_w_per_machine / 1e6        # 固�
 
 ## 4. 基线 MILP（先确定性，后加 DRO）
 
+> 完整数学公式与各类映射见 [model.md](model.md)。
+
 ### 4.1 变量（小时 t，0..719）
 
 - `p_grid[t]`：购电功率（MW），≥0。
