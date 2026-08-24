@@ -1,679 +1,420 @@
-"""日前调度器：批处理能量平移 + 并网/爬坡 + BESS + PV + 双侧 Γ-budget RO。
-
-用 PySCIPOpt 建线性模型。核心思想：数据中心有一个“必须满足”的固定在线负荷，
-还有一批“可延迟”的批处理能量，可以在柔性窗口内搬运到便宜时段；再加上 BESS 充放电、
-本地 PV 出力，目标是最小化总购电成本，并在并网/爬坡/鲁棒预算下保证可行。
-"""
+"""风光储—柔性算力—碳预算的日前调度与实际回放。"""
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
 
-import numpy as np
-
+from .config import (
+    BESS_DEGRADATION_COST_USD_PER_MWH_THROUGHPUT,
+    DEFAULT_CARBON_BUDGET_REDUCTION,
+    SOLAR_REFERENCE_MWH,
+    WIND_REFERENCE_MWH,
+)
 from .inputs import HourlyInput
 
-try:  # PySCIPOpt 只在 scip_env 里；这样本模块在其它环境也能被 import（只是不能求解）。
+try:  # PySCIPOpt 只在 scip_env 里；其它环境仍可导入数据工具。
     from pyscipopt import Model
 except ImportError:  # pragma: no cover
     Model = None
 
 
+LBS_PER_KG = 0.45359237
+
+
 @dataclass(frozen=True)
-class BatchShiftResult:
-    baseline_cost: float      # 不搬移、不用 BESS/PV 的基线总购电成本
-    optimal_cost: float       # 优化后的总购电成本
-    cost_reduction: float     # 总成本下降比例 = (baseline-optimal)/baseline
-    batch: list[float]        # 每个小时的批处理功率（MW）
-    grid: list[float]         # 每个小时的购电功率（MW）
-    bess_charge: list[float]  # 每小时 BESS 充电功率（MW）
-    bess_discharge: list[float]  # 每小时 BESS 放电功率（MW）
-    feasible: bool = True     # 是否找到可行解
+class DayAheadResult:
+    """风光储—碳预算日前计划；所有时段均为 1 小时。"""
+
+    baseline_cost: float
+    baseline_carbon_kg: float
+    grid_cost: float
+    bess_degradation_cost: float
+    operating_cost: float
+    cost_reduction: float
+    forecast_carbon_kg: float
+    carbon_budget_kg: float
+    carbon_budget_slack_kg: float
+    batch: list[float]
+    grid: list[float]
+    bess_charge: list[float]
+    bess_discharge: list[float]
+    pv_generation: list[float]
+    wind_generation: list[float]
+    curtailment: list[float]
+    feasible: bool = True
 
 
-def _infeasible_result() -> BatchShiftResult:
-    return BatchShiftResult(
+@dataclass(frozen=True)
+class ActualReplayResult:
+    """固定日前 BESS/批处理计划下，以实际风光和碳强度进行的事后核算。"""
+
+    grid: list[float]
+    curtailment: list[float]
+    pv_generation: list[float]
+    wind_generation: list[float]
+    grid_cost: float
+    operating_cost: float
+    carbon_kg: float
+    carbon_budget_violation_kg: float
+    grid_limit_violation_hours: int
+    ramp_violation_hours: int
+
+
+def _infeasible_day_ahead_result() -> DayAheadResult:
+    return DayAheadResult(
         baseline_cost=0.0,
-        optimal_cost=0.0,
+        baseline_carbon_kg=0.0,
+        grid_cost=0.0,
+        bess_degradation_cost=0.0,
+        operating_cost=0.0,
         cost_reduction=0.0,
+        forecast_carbon_kg=0.0,
+        carbon_budget_kg=0.0,
+        carbon_budget_slack_kg=0.0,
         batch=[],
         grid=[],
         bess_charge=[],
         bess_discharge=[],
+        pv_generation=[],
+        wind_generation=[],
+        curtailment=[],
         feasible=False,
     )
 
 
-def solve_batch_shift(
-    inputs: list[HourlyInput],
-    *,
-    g_max_mw: float | None = None,
-    r_max_mw: float | None = None,
-    p_grid_initial_mw: float | None = None,
-    bess_power_mw: float | None = None,
-    bess_energy_mwh: float | None = None,
-    bess_efficiency: float = 0.90,
-    soc_min: float = 0.10,
-    soc_max: float = 0.90,
-    soc_initial: float = 0.50,
-    pv_capacity_mw: float | None = None,
-    pv_robustness_budget: float = 0.0,
-    pv_relative_error: float = 0.243,
-    robustness_budget: float = 0.0,
-    energy_uncertainty_fraction: float = 0.079,
-    objective: str = "cost",
-    cost_upper_bound: float | None = None,
-) -> BatchShiftResult:
-    """求解一次日前调度。
+def bess_degradation_cost(
+    charge_mw: list[float],
+    discharge_mw: list[float],
+    cost_usd_per_mwh_throughput: float,
+) -> float:
+    """计算 1 小时时段下按累计充、放总吞吐量计的 BESS 衰减成本。"""
 
-    参数（除 inputs 外都是可选；None 表示不启用该约束/设备）：
-    - g_max_mw: 并网功率上限（MW）。
-    - r_max_mw: 并网爬坡上限（MW/小时）。
-    - p_grid_initial_mw: 第一个小时之前的购电功率，用于第一个小时的爬坡约束。
-    - bess_power_mw / bess_energy_mwh: BESS 功率（MW）与能量容量（MWh），必须成对给。
-    - bess_efficiency / soc_min / soc_max / soc_initial: BESS 往返效率与 SOC 边界/初值。
-    - pv_capacity_mw: 本地 PV 容量（MW）；用系统太阳形状缩放。
-    - pv_robustness_budget (Γ_pv) / pv_relative_error (ε): 能源侧鲁棒预算，把 PV 按
-      (1-Γ_pv·ε) 打折，代表“为 PV 预测误差留裕量”。
-    - robustness_budget (Γ) / energy_uncertainty_fraction (δ): 算力侧鲁棒预算，把批处理
-      总能量放大到 (1+Γ·δ) 倍，代表“为作业到达/时长不确定多排能量”。
-    """
-
-    if Model is None:
-        raise RuntimeError("pyscipopt is required; run inside scip_env")
-    if (bess_power_mw is None) != (bess_energy_mwh is None):
-        raise ValueError("bess_power_mw and bess_energy_mwh must be given together")
-
-    model = Model("batch_shift")
-    model.hideOutput()
-
-    hours = len(inputs)
-    # 必须满足的固定负荷 = 在线负荷 + 基座功率（不参与延迟）
-    p_must = inputs[0].online_mw + inputs[0].base_mw
-
-    # 决策变量：每小时批处理功率，上界是该小时的柔性窗口能量
-    batch = {
-        item.hour: model.addVar(
-            lb=0.0,
-            ub=item.batch_window_mwh,
-            name=f"batch_{item.hour}",
-        )
-        for item in inputs
-    }
-
-    # 购电功率初始表达式：固定负荷 + 批处理；后面再叠 BESS 和 PV
-    p_grid = {item.hour: p_must + batch[item.hour] for item in inputs}
-    p_ch: dict[int, object] = {}
-    p_dis: dict[int, object] = {}
-
-    if bess_power_mw is not None:
-        # 往返效率 η 拆成充放电各 √η
-        eta = math.sqrt(bess_efficiency)
-        p_ch = {
-            t: model.addVar(lb=0.0, ub=bess_power_mw, name=f"pch_{t}")
-            for t in range(hours)
-        }
-        p_dis = {
-            t: model.addVar(lb=0.0, ub=bess_power_mw, name=f"pdis_{t}")
-            for t in range(hours)
-        }
-        energy = {
-            t: model.addVar(
-                lb=soc_min * bess_energy_mwh,
-                ub=soc_max * bess_energy_mwh,
-                name=f"bess_energy_{t}",
-            )
-            for t in range(hours + 1)
-        }
-        model.addCons(energy[0] == soc_initial * bess_energy_mwh)
-        # SOC 递推：充电进 η·p_ch，放电出 p_dis/η
-        for t in range(hours):
-            model.addCons(
-                energy[t + 1] == energy[t] + eta * p_ch[t] - p_dis[t] / eta
-            )
-        # 末态回到初态，禁止靠“期末卖空”占便宜
-        model.addCons(energy[hours] == energy[0])
-        for t in range(hours):
-            p_grid[t] = p_grid[t] + p_ch[t] - p_dis[t]
-
-    if pv_capacity_mw is not None:
-        # 能源侧鲁棒：PV 按 (1 - Γ_pv·ε) 打折，模拟最坏情况下的风光缺口
-        effective_capacity = pv_capacity_mw * (
-            1.0 - pv_robustness_budget * pv_relative_error
-        )
-        pv = _pv_profile(inputs, effective_capacity)
-        for item in inputs:
-            p_grid[item.hour] = p_grid[item.hour] - pv[item.hour]
-
-    # 算力侧鲁棒：批处理总能量放大到 (1 + Γ·δ) 倍，模拟作业到达/时长偏多
-    total_energy = sum(item.batch_baseline_mwh for item in inputs)
-    total_energy *= 1.0 + robustness_budget * energy_uncertainty_fraction
-    # 能量守恒：所有批处理能量必须在窗口内排完（只平移、不消失）
-    model.addCons(
-        sum(batch[item.hour] for item in inputs) == total_energy,
-        name="batch_energy_conservation",
+    if len(charge_mw) != len(discharge_mw):
+        raise ValueError("charge_mw and discharge_mw must have the same length")
+    if cost_usd_per_mwh_throughput < 0.0:
+        raise ValueError("cost_usd_per_mwh_throughput must be non-negative")
+    return cost_usd_per_mwh_throughput * sum(
+        charge + discharge for charge, discharge in zip(charge_mw, discharge_mw)
     )
 
-    # 并网上限与“不反向送电”
-    if g_max_mw is not None:
-        for item in inputs:
-            model.addCons(p_grid[item.hour] <= g_max_mw, name=f"grid_limit_{item.hour}")
-    for item in inputs:
-        model.addCons(p_grid[item.hour] >= 0.0, name=f"grid_nonneg_{item.hour}")
 
-    # 爬坡约束：相邻小时购电变化不超过 R_max
-    if r_max_mw is not None:
-        previous = p_grid_initial_mw
-        for item in inputs:
-            current = p_grid[item.hour]
-            if previous is not None:
-                model.addCons(current - previous <= r_max_mw, name=f"ramp_up_{item.hour}")
-                model.addCons(current - previous >= -r_max_mw, name=f"ramp_down_{item.hour}")
-            previous = current
+def _local_resource_profile(
+    values_mwh: list[float],
+    *,
+    capacity_mw: float,
+    reference_mwh: float,
+    label: str,
+) -> list[float]:
+    """以固定 EIA ERCO 参考值缩放为反事实本地可再生出力。"""
 
-    # 目标：最小化总购电成本（电价 × 每小时购电功率）
-    if objective == "cost":
-        objective_expr = sum(
-            item.dam_lz_houston_usd_per_mwh * p_grid[item.hour] for item in inputs
-        )
-    elif objective == "carbon":
-        objective_expr = sum(
-            item.forecast_consumed_co2_lbs_per_kwh * p_grid[item.hour]
-            for item in inputs
-        )
+    if capacity_mw < 0.0:
+        raise ValueError(f"{label}_capacity_mw must be non-negative")
+    if reference_mwh <= 0.0:
+        raise ValueError(f"{label}_reference_mwh must be positive")
+    return [
+        capacity_mw * min(1.0, max(0.0, value) / reference_mwh)
+        for value in values_mwh
+    ]
+
+
+def _resource_profiles(
+    inputs: list[HourlyInput],
+    *,
+    pv_capacity_mw: float,
+    wind_capacity_mw: float,
+    solar_reference_mwh: float,
+    wind_reference_mwh: float,
+    actual: bool,
+) -> tuple[list[float], list[float]]:
+    """返回本地 PV 和风电可用出力；actual=False 使用日前预测。"""
+
+    if actual:
+        solar = [item.actual_erco_solar_generation_mwh for item in inputs]
+        wind = [item.actual_erco_wind_generation_mwh for item in inputs]
     else:
-        raise ValueError(f"unknown objective: {objective}")
-
-    if cost_upper_bound is not None:
-        model.addCons(
-            sum(
-                item.dam_lz_houston_usd_per_mwh * p_grid[item.hour]
-                for item in inputs
-            )
-            <= cost_upper_bound,
-            name="cost_guardrail",
-        )
-
-    model.setObjective(objective_expr, "minimize")
-    model.optimize()
-
-    if model.getStatus() != "optimal":
-        return _infeasible_result()
-
-    batch_values = [model.getVal(batch[item.hour]) for item in inputs]
-    grid_values = [model.getVal(p_grid[item.hour]) for item in inputs]
-    charge_values = [model.getVal(p_ch[t]) if p_ch else 0.0 for t in range(hours)]
-    discharge_values = [model.getVal(p_dis[t]) if p_dis else 0.0 for t in range(hours)]
-    optimal_cost = sum(
-        item.dam_lz_houston_usd_per_mwh * grid_values[index]
-        for index, item in enumerate(inputs)
-    )
-    baseline_cost = sum(
-        item.dam_lz_houston_usd_per_mwh * (p_must + item.batch_baseline_mwh)
-        for item in inputs
-    )
-
-    return BatchShiftResult(
-        baseline_cost=baseline_cost,
-        optimal_cost=optimal_cost,
-        cost_reduction=(
-            (baseline_cost - optimal_cost) / baseline_cost if baseline_cost else 0.0
+        solar = [item.forecast_erco_solar_generation_mwh for item in inputs]
+        wind = [item.forecast_erco_wind_generation_mwh for item in inputs]
+    return (
+        _local_resource_profile(
+            solar,
+            capacity_mw=pv_capacity_mw,
+            reference_mwh=solar_reference_mwh,
+            label="pv",
         ),
-        batch=batch_values,
-        grid=grid_values,
-        bess_charge=charge_values,
-        bess_discharge=discharge_values,
-        feasible=True,
+        _local_resource_profile(
+            wind,
+            capacity_mw=wind_capacity_mw,
+            reference_mwh=wind_reference_mwh,
+            label="wind",
+        ),
     )
 
 
-def solve_lexicographic(
-    inputs: list[HourlyInput],
-    *,
-    cost_guardrail: float = 0.01,
-    **kwargs,
-) -> BatchShiftResult:
-    """词典序：先 min 成本，再在 (1+cost_guardrail) 成本保护带内 min 碳。"""
+def _carbon_kg(grid_mw: list[float], carbon_lbs_per_kwh: list[float]) -> float:
+    """计算消费侧平均碳核算量（kgCO2）。"""
 
-    first = solve_batch_shift(inputs, objective="cost", **kwargs)
-    if not first.feasible:
-        return first
-    upper_bound = first.optimal_cost * (1.0 + cost_guardrail)
-    return solve_batch_shift(
-        inputs,
-        objective="carbon",
-        cost_upper_bound=upper_bound,
-        **kwargs,
+    return sum(
+        grid * 1000.0 * carbon * LBS_PER_KG
+        for grid, carbon in zip(grid_mw, carbon_lbs_per_kwh, strict=True)
     )
 
 
-def solve_robust_budgeted(
+def solve_wind_solar_storage(
     inputs: list[HourlyInput],
     *,
     g_max_mw: float,
     r_max_mw: float,
     p_grid_initial_mw: float,
-    bess_power_mw: float | None = None,
-    bess_energy_mwh: float | None = None,
+    bess_power_mw: float,
+    bess_energy_mwh: float,
+    pv_capacity_mw: float,
+    wind_capacity_mw: float,
+    carbon_budget_reduction: float = DEFAULT_CARBON_BUDGET_REDUCTION,
+    solar_reference_mwh: float = SOLAR_REFERENCE_MWH,
+    wind_reference_mwh: float = WIND_REFERENCE_MWH,
     bess_efficiency: float = 0.90,
     soc_min: float = 0.10,
     soc_max: float = 0.90,
     soc_initial: float = 0.50,
-    pv_capacity_mw: float | None = None,
-    pv_relative_error: float = 0.243,
-    gamma_pv: float = 1.0,
-    robustness_budget: float = 0.0,
-    energy_uncertainty_fraction: float = 0.079,
-) -> BatchShiftResult:
-    """逐小时 PV 预算鲁棒（能源侧 Bertsimas–Sim robust counterpart）。
+    bess_degradation_cost_usd_per_mwh_throughput: float = BESS_DEGRADATION_COST_USD_PER_MWH_THROUGHPUT,
+) -> DayAheadResult:
+    """求解预测风光、BESS、有效容量和预测碳预算的日前 MILP。
 
-    不确定集：PV 短缺 δ_t ∈ [0, ε·π_t^nom]，且 Σ δ_t/(ε·π_t^nom) ≤ Γ_pv。
-    鲁棒目标 = 名义成本 + “Γ_pv 个最大价格加权短缺之和”，用辅助变量 w、r_t 线性化：
-        min Σ p_t g_t + Γ_pv·w + Σ r_t
-        s.t. w + r_t ≥ p_t·ε·π_t^nom,  ∀t
-    并网鲁棒：g_t + ε·π_t^nom ≤ G_max（任一小时都可能发生全额短缺）。
+    碳预算基准使用相同风光容量、固定批处理时序和未启用 BESS 的预测购电。
     """
 
     if Model is None:
         raise RuntimeError("pyscipopt is required; run inside scip_env")
+    if not inputs:
+        raise ValueError("inputs must not be empty")
+    if min(g_max_mw, r_max_mw, bess_power_mw, bess_energy_mwh) < 0.0:
+        raise ValueError("grid and BESS capacities must be non-negative")
+    if not 0.0 <= carbon_budget_reduction < 1.0:
+        raise ValueError("carbon_budget_reduction must be in [0, 1)")
+    if not 0.0 < bess_efficiency <= 1.0:
+        raise ValueError("bess_efficiency must be in (0, 1]")
+    if not 0.0 <= soc_min <= soc_initial <= soc_max <= 1.0:
+        raise ValueError("SOC values must satisfy 0 <= min <= initial <= max <= 1")
+    if bess_degradation_cost_usd_per_mwh_throughput < 0.0:
+        raise ValueError("bess_degradation_cost_usd_per_mwh_throughput must be non-negative")
 
-    model = Model("robust_budgeted")
-    model.hideOutput()
     hours = len(inputs)
     p_must = inputs[0].online_mw + inputs[0].base_mw
-    pv_nom = _pv_profile(inputs, pv_capacity_mw) if pv_capacity_mw else [0.0] * hours
+    pv, wind = _resource_profiles(
+        inputs,
+        pv_capacity_mw=pv_capacity_mw,
+        wind_capacity_mw=wind_capacity_mw,
+        solar_reference_mwh=solar_reference_mwh,
+        wind_reference_mwh=wind_reference_mwh,
+        actual=False,
+    )
+    baseline_grid = [
+        max(0.0, p_must + item.batch_baseline_mwh - pv[t] - wind[t])
+        for t, item in enumerate(inputs)
+    ]
+    prices = [item.dam_lz_houston_usd_per_mwh for item in inputs]
+    forecast_carbon = [item.forecast_consumed_co2_lbs_per_kwh for item in inputs]
+    baseline_cost = sum(price * grid for price, grid in zip(prices, baseline_grid))
+    baseline_carbon_kg = _carbon_kg(baseline_grid, forecast_carbon)
+    carbon_budget_kg = (1.0 - carbon_budget_reduction) * baseline_carbon_kg
 
+    model = Model("wind_solar_storage_carbon_budget")
+    model.hideOutput()
     batch = {
         t: model.addVar(lb=0.0, ub=inputs[t].batch_window_mwh, name=f"batch_{t}")
         for t in range(hours)
     }
-    g_nom = {t: model.addVar(lb=0.0, name=f"g_{t}") for t in range(hours)}
-
-    p_ch: dict[int, object] = {}
-    p_dis: dict[int, object] = {}
-    if bess_power_mw is not None:
-        eta = math.sqrt(bess_efficiency)
-        p_ch = {t: model.addVar(lb=0.0, ub=bess_power_mw, name=f"pch_{t}") for t in range(hours)}
-        p_dis = {t: model.addVar(lb=0.0, ub=bess_power_mw, name=f"pdis_{t}") for t in range(hours)}
-        energy = {
-            t: model.addVar(lb=soc_min * bess_energy_mwh, ub=soc_max * bess_energy_mwh, name=f"e_{t}")
-            for t in range(hours + 1)
-        }
-        model.addCons(energy[0] == soc_initial * bess_energy_mwh)
-        for t in range(hours):
-            model.addCons(energy[t + 1] == energy[t] + eta * p_ch[t] - p_dis[t] / eta)
-        model.addCons(energy[hours] == energy[0])
-
-    # 名义功率平衡：g_t = P_must + batch + 充 − 放 − PV_nom
-    for t in range(hours):
-        rhs = p_must + batch[t] - pv_nom[t]
-        if bess_power_mw is not None:
-            rhs = rhs + p_ch[t] - p_dis[t]
-        model.addCons(g_nom[t] == rhs, name=f"balance_{t}")
-
-    # 鲁棒并网：名义 + 全额短缺
-    for t in range(hours):
-        model.addCons(
-            g_nom[t] + pv_relative_error * pv_nom[t] <= g_max_mw,
-            name=f"grid_limit_{t}",
+    grid = {
+        t: model.addVar(lb=0.0, ub=g_max_mw, name=f"grid_{t}")
+        for t in range(hours)
+    }
+    curtailment = {
+        t: model.addVar(lb=0.0, ub=pv[t] + wind[t], name=f"curtailment_{t}")
+        for t in range(hours)
+    }
+    p_ch = {
+        t: model.addVar(lb=0.0, ub=bess_power_mw, name=f"pch_{t}")
+        for t in range(hours)
+    }
+    p_dis = {
+        t: model.addVar(lb=0.0, ub=bess_power_mw, name=f"pdis_{t}")
+        for t in range(hours)
+    }
+    bess_mode = {
+        t: model.addVar(vtype="B", name=f"bess_charge_mode_{t}")
+        for t in range(hours)
+    }
+    eta = math.sqrt(bess_efficiency)
+    energy = {
+        t: model.addVar(
+            lb=soc_min * bess_energy_mwh,
+            ub=soc_max * bess_energy_mwh,
+            name=f"bess_energy_{t}",
         )
-
-    # 爬坡（名义购电）
-    previous = p_grid_initial_mw
+        for t in range(hours + 1)
+    }
+    model.addCons(energy[0] == soc_initial * bess_energy_mwh)
     for t in range(hours):
-        if previous is not None:
-            model.addCons(g_nom[t] - previous <= r_max_mw, name=f"ramp_up_{t}")
-            model.addCons(g_nom[t] - previous >= -r_max_mw, name=f"ramp_down_{t}")
-        previous = g_nom[t]
-
-    # 批处理能量守恒 + 算力侧 Γ（标量，保留）
-    total_energy = sum(item.batch_baseline_mwh for item in inputs)
-    total_energy *= 1.0 + robustness_budget * energy_uncertainty_fraction
-    model.addCons(sum(batch[t] for t in range(hours)) == total_energy)
-
-    # 保护函数辅助变量
-    w = model.addVar(lb=0.0, name="w")
-    r = {t: model.addVar(lb=0.0, name=f"r_{t}") for t in range(hours)}
-    for t in range(hours):
+        if inputs[t].batch_capacity_mw is not None:
+            model.addCons(
+                batch[t] <= inputs[t].batch_capacity_mw,
+                name=f"effective_capacity_{t}",
+            )
+        model.addCons(p_ch[t] <= bess_power_mw * bess_mode[t])
+        model.addCons(p_dis[t] <= bess_power_mw * (1.0 - bess_mode[t]))
         model.addCons(
-            w + r[t] >= inputs[t].dam_lz_houston_usd_per_mwh * pv_relative_error * pv_nom[t],
-            name=f"protect_{t}",
+            energy[t + 1] == energy[t] + eta * p_ch[t] - p_dis[t] / eta,
+            name=f"soc_{t}",
         )
-
-    # 鲁棒目标：名义成本 + Γ_pv 个最大短缺
-    model.setObjective(
-        sum(inputs[t].dam_lz_houston_usd_per_mwh * g_nom[t] for t in range(hours))
-        + gamma_pv * w
-        + sum(r[t] for t in range(hours)),
-        "minimize",
+        model.addCons(
+            grid[t]
+            == p_must
+            + batch[t]
+            + p_ch[t]
+            - p_dis[t]
+            - pv[t]
+            - wind[t]
+            + curtailment[t],
+            name=f"power_balance_{t}",
+        )
+    model.addCons(energy[hours] == energy[0], name="terminal_soc")
+    model.addCons(
+        sum(batch[t] for t in range(hours))
+        == sum(item.batch_baseline_mwh for item in inputs),
+        name="batch_energy_conservation",
     )
-    model.optimize()
+    previous_grid = p_grid_initial_mw
+    for t in range(hours):
+        model.addCons(grid[t] - previous_grid <= r_max_mw, name=f"ramp_up_{t}")
+        model.addCons(grid[t] - previous_grid >= -r_max_mw, name=f"ramp_down_{t}")
+        previous_grid = grid[t]
 
+    forecast_carbon_expr = sum(
+        forecast_carbon[t] * 1000.0 * LBS_PER_KG * grid[t]
+        for t in range(hours)
+    )
+    model.addCons(
+        forecast_carbon_expr <= carbon_budget_kg,
+        name="forecast_carbon_budget",
+    )
+    grid_cost_expr = sum(prices[t] * grid[t] for t in range(hours))
+    degradation_cost_expr = (
+        bess_degradation_cost_usd_per_mwh_throughput
+        * sum(p_ch[t] + p_dis[t] for t in range(hours))
+    )
+    model.setObjective(grid_cost_expr + degradation_cost_expr, "minimize")
+    model.optimize()
     if model.getStatus() != "optimal":
-        return _infeasible_result()
+        return _infeasible_day_ahead_result()
 
     batch_values = [model.getVal(batch[t]) for t in range(hours)]
-    grid_values = [model.getVal(g_nom[t]) for t in range(hours)]
-    charge_values = [model.getVal(p_ch[t]) if p_ch else 0.0 for t in range(hours)]
-    discharge_values = [model.getVal(p_dis[t]) if p_dis else 0.0 for t in range(hours)]
-    # 鲁棒成本 = 名义成本 + 保护函数（最坏情形成本），即目标函数值
-    optimal_cost = model.getObjVal()
-    baseline_cost = sum(
-        item.dam_lz_houston_usd_per_mwh * (p_must + item.batch_baseline_mwh)
-        for item in inputs
+    grid_values = [model.getVal(grid[t]) for t in range(hours)]
+    charge_values = [model.getVal(p_ch[t]) for t in range(hours)]
+    discharge_values = [model.getVal(p_dis[t]) for t in range(hours)]
+    curtailment_values = [model.getVal(curtailment[t]) for t in range(hours)]
+    grid_cost = sum(price * value for price, value in zip(prices, grid_values))
+    degradation_cost = bess_degradation_cost(
+        charge_values,
+        discharge_values,
+        bess_degradation_cost_usd_per_mwh_throughput,
     )
-    return BatchShiftResult(
+    operating_cost = grid_cost + degradation_cost
+    forecast_carbon_kg = _carbon_kg(grid_values, forecast_carbon)
+    return DayAheadResult(
         baseline_cost=baseline_cost,
-        optimal_cost=optimal_cost,
-        cost_reduction=(baseline_cost - optimal_cost) / baseline_cost if baseline_cost else 0.0,
-        batch=batch_values,
-        grid=grid_values,
-        bess_charge=charge_values,
-        bess_discharge=discharge_values,
-        feasible=True,
-    )
-
-
-def solve_saa(
-    inputs: list[HourlyInput],
-    *,
-    scenarios: int,
-    seed: int,
-    g_max_mw: float,
-    r_max_mw: float,
-    p_grid_initial_mw: float,
-    bess_power_mw: float | None = None,
-    bess_energy_mwh: float | None = None,
-    bess_efficiency: float = 0.90,
-    soc_min: float = 0.10,
-    soc_max: float = 0.90,
-    soc_initial: float = 0.50,
-    pv_capacity_mw: float | None = None,
-    pv_relative_error: float = 0.243,
-) -> BatchShiftResult:
-    """样本平均近似（SAA）：多场景期望成本，共享批处理/BESS，逐场景购电。"""
-
-    if Model is None:
-        raise RuntimeError("pyscipopt is required; run inside scip_env")
-
-    model = Model("saa")
-    model.hideOutput()
-    hours = len(inputs)
-    p_must = inputs[0].online_mw + inputs[0].base_mw
-    pv_nom = _pv_profile(inputs, pv_capacity_mw) if pv_capacity_mw else [0.0] * hours
-    rng = np.random.default_rng(seed)
-    # 场景短缺因子 z_s ∈ [0, ε]，按均匀分布采样
-    z = {s: rng.uniform(0.0, pv_relative_error, size=hours) for s in range(scenarios)}
-
-    batch = {t: model.addVar(lb=0.0, ub=inputs[t].batch_window_mwh, name=f"batch_{t}") for t in range(hours)}
-    p_ch: dict[int, object] = {}
-    p_dis: dict[int, object] = {}
-    if bess_power_mw is not None:
-        eta = math.sqrt(bess_efficiency)
-        p_ch = {t: model.addVar(lb=0.0, ub=bess_power_mw, name=f"pch_{t}") for t in range(hours)}
-        p_dis = {t: model.addVar(lb=0.0, ub=bess_power_mw, name=f"pdis_{t}") for t in range(hours)}
-        energy = {
-            t: model.addVar(lb=soc_min * bess_energy_mwh, ub=soc_max * bess_energy_mwh, name=f"e_{t}")
-            for t in range(hours + 1)
-        }
-        model.addCons(energy[0] == soc_initial * bess_energy_mwh)
-        for t in range(hours):
-            model.addCons(energy[t + 1] == energy[t] + eta * p_ch[t] - p_dis[t] / eta)
-        model.addCons(energy[hours] == energy[0])
-
-    total_energy = sum(item.batch_baseline_mwh for item in inputs)
-    model.addCons(sum(batch[t] for t in range(hours)) == total_energy)
-
-    g = {s: {t: model.addVar(lb=0.0, name=f"g_{s}_{t}") for t in range(hours)} for s in range(scenarios)}
-    for s in range(scenarios):
-        previous = p_grid_initial_mw
-        for t in range(hours):
-            rhs = p_must + batch[t] - pv_nom[t] * (1.0 - z[s][t])
-            if bess_power_mw is not None:
-                rhs = rhs + p_ch[t] - p_dis[t]
-            model.addCons(g[s][t] == rhs, name=f"balance_{s}_{t}")
-            model.addCons(g[s][t] <= g_max_mw, name=f"limit_{s}_{t}")
-            if previous is not None:
-                model.addCons(g[s][t] - previous <= r_max_mw, name=f"ramp_up_{s}_{t}")
-                model.addCons(g[s][t] - previous >= -r_max_mw, name=f"ramp_down_{s}_{t}")
-            previous = g[s][t]
-
-    # 期望成本
-    model.setObjective(
-        (1.0 / scenarios)
-        * sum(
-            inputs[t].dam_lz_houston_usd_per_mwh * g[s][t]
-            for s in range(scenarios)
-            for t in range(hours)
+        baseline_carbon_kg=baseline_carbon_kg,
+        grid_cost=grid_cost,
+        bess_degradation_cost=degradation_cost,
+        operating_cost=operating_cost,
+        cost_reduction=(
+            (baseline_cost - operating_cost) / baseline_cost if baseline_cost else 0.0
         ),
-        "minimize",
-    )
-    model.optimize()
-
-    if model.getStatus() != "optimal":
-        return _infeasible_result()
-
-    batch_values = [model.getVal(batch[t]) for t in range(hours)]
-    grid_values = [sum(model.getVal(g[s][t]) for s in range(scenarios)) / scenarios for t in range(hours)]
-    charge_values = [model.getVal(p_ch[t]) if p_ch else 0.0 for t in range(hours)]
-    discharge_values = [model.getVal(p_dis[t]) if p_dis else 0.0 for t in range(hours)]
-    optimal_cost = sum(inputs[t].dam_lz_houston_usd_per_mwh * grid_values[t] for t in range(hours))
-    baseline_cost = sum(
-        item.dam_lz_houston_usd_per_mwh * (p_must + item.batch_baseline_mwh)
-        for item in inputs
-    )
-    return BatchShiftResult(
-        baseline_cost=baseline_cost,
-        optimal_cost=optimal_cost,
-        cost_reduction=(baseline_cost - optimal_cost) / baseline_cost if baseline_cost else 0.0,
+        forecast_carbon_kg=forecast_carbon_kg,
+        carbon_budget_kg=carbon_budget_kg,
+        carbon_budget_slack_kg=carbon_budget_kg - forecast_carbon_kg,
         batch=batch_values,
         grid=grid_values,
         bess_charge=charge_values,
         bess_discharge=discharge_values,
+        pv_generation=pv,
+        wind_generation=wind,
+        curtailment=curtailment_values,
         feasible=True,
+    )
+
+
+def replay_actual_wind_solar(
+    inputs: list[HourlyInput],
+    plan: DayAheadResult,
+    *,
+    pv_capacity_mw: float,
+    wind_capacity_mw: float,
+    solar_reference_mwh: float = SOLAR_REFERENCE_MWH,
+    wind_reference_mwh: float = WIND_REFERENCE_MWH,
+    g_max_mw: float | None = None,
+    r_max_mw: float | None = None,
+    p_grid_initial_mw: float | None = None,
+) -> ActualReplayResult:
+    """固定日前批处理/BESS动作，用实际风光和碳强度进行事后回放。"""
+
+    if not plan.feasible:
+        raise ValueError("cannot replay an infeasible day-ahead plan")
+    if len(inputs) != len(plan.grid):
+        raise ValueError("inputs and plan must have the same horizon")
+    pv, wind = _resource_profiles(
+        inputs,
+        pv_capacity_mw=pv_capacity_mw,
+        wind_capacity_mw=wind_capacity_mw,
+        solar_reference_mwh=solar_reference_mwh,
+        wind_reference_mwh=wind_reference_mwh,
+        actual=True,
+    )
+    p_must = inputs[0].online_mw + inputs[0].base_mw
+    residual_load = [
+        p_must + plan.batch[t] + plan.bess_charge[t] - plan.bess_discharge[t]
+        for t in range(len(inputs))
+    ]
+    actual_grid = [
+        max(0.0, residual_load[t] - pv[t] - wind[t])
+        for t in range(len(inputs))
+    ]
+    actual_curtailment = [
+        max(0.0, pv[t] + wind[t] - residual_load[t])
+        for t in range(len(inputs))
+    ]
+    actual_carbon = [item.actual_consumed_co2_lbs_per_kwh for item in inputs]
+    actual_carbon_kg = _carbon_kg(actual_grid, actual_carbon)
+    prices = [item.dam_lz_houston_usd_per_mwh for item in inputs]
+    actual_grid_cost = sum(
+        price * value for price, value in zip(prices, actual_grid)
+    )
+    previous = p_grid_initial_mw
+    grid_limit_violations = 0
+    ramp_violations = 0
+    for value in actual_grid:
+        if g_max_mw is not None and value > g_max_mw + 1e-7:
+            grid_limit_violations += 1
+        if previous is not None and r_max_mw is not None:
+            if abs(value - previous) > r_max_mw + 1e-7:
+                ramp_violations += 1
+        previous = value
+    return ActualReplayResult(
+        grid=actual_grid,
+        curtailment=actual_curtailment,
+        pv_generation=pv,
+        wind_generation=wind,
+        grid_cost=actual_grid_cost,
+        operating_cost=actual_grid_cost + plan.bess_degradation_cost,
+        carbon_kg=actual_carbon_kg,
+        carbon_budget_violation_kg=max(0.0, actual_carbon_kg - plan.carbon_budget_kg),
+        grid_limit_violation_hours=grid_limit_violations,
+        ramp_violation_hours=ramp_violations,
     )
 
 
 def _peak_load(inputs: list[HourlyInput]) -> float:
     """基线峰值负荷 = 固定负荷 + 批处理基线功率的最大值。"""
+
     p_must = inputs[0].online_mw + inputs[0].base_mw
     return max(p_must + item.batch_baseline_mwh for item in inputs)
-
-
-def _pv_profile(inputs: list[HourlyInput], pv_capacity_mw: float) -> list[float]:
-    """把 ERCO 系统太阳预测形状缩放到本地 PV 容量。"""
-
-    solar = [item.forecast_erco_solar_generation_mwh for item in inputs]
-    peak = max(solar)
-    if peak <= 0:
-        return [0.0] * len(inputs)
-    return [pv_capacity_mw * value / peak for value in solar]
-
-
-def sweep_grid_limit(
-    inputs: list[HourlyInput],
-    *,
-    g_max_fractions: list[float],
-    r_max_fraction: float | None = None,
-) -> list[tuple[float, bool, float]]:
-    """扫并网上限 G_max（按峰值负荷的倍数）。"""
-
-    p_peak = _peak_load(inputs)
-    p_must = inputs[0].online_mw + inputs[0].base_mw
-    r_max_mw = r_max_fraction * p_peak if r_max_fraction is not None else None
-    p_grid_initial = p_must + inputs[0].batch_baseline_mwh
-
-    rows: list[tuple[float, bool, float]] = []
-    for fraction in g_max_fractions:
-        result = solve_batch_shift(
-            inputs,
-            g_max_mw=fraction * p_peak,
-            r_max_mw=r_max_mw,
-            p_grid_initial_mw=p_grid_initial,
-        )
-        rows.append((fraction, result.feasible, result.cost_reduction))
-    return rows
-
-
-def sweep_ramp_limit(
-    inputs: list[HourlyInput],
-    *,
-    g_max_fraction: float,
-    r_max_fractions: list[float],
-) -> list[tuple[float, bool, float]]:
-    """扫爬坡上限 R_max（固定 G_max，按峰值负荷的倍数/小时）。"""
-
-    p_peak = _peak_load(inputs)
-    p_must = inputs[0].online_mw + inputs[0].base_mw
-    g_max_mw = g_max_fraction * p_peak
-    p_grid_initial = p_must + inputs[0].batch_baseline_mwh
-
-    rows: list[tuple[float, bool, float]] = []
-    for fraction in r_max_fractions:
-        result = solve_batch_shift(
-            inputs,
-            g_max_mw=g_max_mw,
-            r_max_mw=fraction * p_peak,
-            p_grid_initial_mw=p_grid_initial,
-        )
-        rows.append((fraction, result.feasible, result.cost_reduction))
-    return rows
-
-
-def sweep_bess_power(
-    inputs: list[HourlyInput],
-    *,
-    g_max_fraction: float,
-    r_max_fraction: float,
-    power_fractions: list[float],
-    energy_hours: float = 2.0,
-    bess_efficiency: float = 0.90,
-) -> list[tuple[float, bool, float, float]]:
-    """扫 BESS 功率（能量固定为若干小时×功率），返回成本下降。"""
-
-    p_peak = _peak_load(inputs)
-    p_must = inputs[0].online_mw + inputs[0].base_mw
-    g_max_mw = g_max_fraction * p_peak
-    r_max_mw = r_max_fraction * p_peak
-    p_grid_initial = p_must + inputs[0].batch_baseline_mwh
-
-    rows: list[tuple[float, bool, float, float]] = []
-    for fraction in power_fractions:
-        power = fraction * p_peak
-        result = solve_batch_shift(
-            inputs,
-            g_max_mw=g_max_mw,
-            r_max_mw=r_max_mw,
-            p_grid_initial_mw=p_grid_initial,
-            bess_power_mw=power,
-            bess_energy_mwh=energy_hours * power,
-            bess_efficiency=bess_efficiency,
-        )
-        rows.append((fraction, result.feasible, result.cost_reduction, power))
-    return rows
-
-
-def sweep_pv_capacity(
-    inputs: list[HourlyInput],
-    *,
-    g_max_fraction: float,
-    r_max_fraction: float,
-    pv_fractions: list[float],
-    bess_power_fraction: float = 0.0,
-    bess_energy_hours: float = 2.0,
-) -> list[tuple[float, bool, float, float]]:
-    """扫本地 PV 容量（按必须满足负荷的倍数），返回成本下降。"""
-
-    p_peak = _peak_load(inputs)
-    p_must = inputs[0].online_mw + inputs[0].base_mw
-    g_max_mw = g_max_fraction * p_peak
-    r_max_mw = r_max_fraction * p_peak
-    p_grid_initial = p_must + inputs[0].batch_baseline_mwh
-
-    rows: list[tuple[float, bool, float, float]] = []
-    for fraction in pv_fractions:
-        capacity = fraction * p_must
-        result = solve_batch_shift(
-            inputs,
-            g_max_mw=g_max_mw,
-            r_max_mw=r_max_mw,
-            p_grid_initial_mw=p_grid_initial,
-            bess_power_mw=bess_power_fraction * p_peak,
-            bess_energy_mwh=bess_energy_hours * bess_power_fraction * p_peak,
-            pv_capacity_mw=capacity,
-        )
-        rows.append((fraction, result.feasible, result.cost_reduction, capacity))
-    return rows
-
-
-def sweep_robustness_budget(
-    inputs: list[HourlyInput],
-    *,
-    g_max_fraction: float,
-    r_max_fraction: float,
-    budgets: list[float],
-    energy_uncertainty_fraction: float = 0.079,
-    bess_power_fraction: float = 0.5,
-    bess_energy_hours: float = 2.0,
-    pv_fraction: float = 1.0,
-) -> list[tuple[float, bool, float]]:
-    """扫算力侧鲁棒预算 Γ（批处理总能量不确定）。"""
-
-    p_peak = _peak_load(inputs)
-    p_must = inputs[0].online_mw + inputs[0].base_mw
-    g_max_mw = g_max_fraction * p_peak
-    r_max_mw = r_max_fraction * p_peak
-    p_grid_initial = p_must + inputs[0].batch_baseline_mwh
-
-    rows: list[tuple[float, bool, float]] = []
-    for budget in budgets:
-        result = solve_batch_shift(
-            inputs,
-            g_max_mw=g_max_mw,
-            r_max_mw=r_max_mw,
-            p_grid_initial_mw=p_grid_initial,
-            bess_power_mw=bess_power_fraction * p_peak,
-            bess_energy_mwh=bess_energy_hours * bess_power_fraction * p_peak,
-            pv_capacity_mw=pv_fraction * p_must,
-            robustness_budget=budget,
-            energy_uncertainty_fraction=energy_uncertainty_fraction,
-        )
-        rows.append((budget, result.feasible, result.cost_reduction))
-    return rows
-
-
-def sweep_pv_robustness(
-    inputs: list[HourlyInput],
-    *,
-    g_max_fraction: float,
-    r_max_fraction: float,
-    budgets: list[float],
-    pv_relative_error: float = 0.243,
-    bess_power_fraction: float = 0.5,
-    bess_energy_hours: float = 2.0,
-    pv_fraction: float = 1.0,
-) -> list[tuple[float, bool, float]]:
-    """扫能源侧鲁棒预算 Γ_pv（PV 预测误差不确定）。"""
-
-    p_peak = _peak_load(inputs)
-    p_must = inputs[0].online_mw + inputs[0].base_mw
-    g_max_mw = g_max_fraction * p_peak
-    r_max_mw = r_max_fraction * p_peak
-    p_grid_initial = p_must + inputs[0].batch_baseline_mwh
-
-    rows: list[tuple[float, bool, float]] = []
-    for budget in budgets:
-        result = solve_batch_shift(
-            inputs,
-            g_max_mw=g_max_mw,
-            r_max_mw=r_max_mw,
-            p_grid_initial_mw=p_grid_initial,
-            bess_power_mw=bess_power_fraction * p_peak,
-            bess_energy_mwh=bess_energy_hours * bess_power_fraction * p_peak,
-            pv_capacity_mw=pv_fraction * p_must,
-            pv_robustness_budget=budget,
-            pv_relative_error=pv_relative_error,
-        )
-        rows.append((budget, result.feasible, result.cost_reduction))
-    return rows

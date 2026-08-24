@@ -7,7 +7,12 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import N_MACHINES, POWER_SCENARIOS
+from .config import (
+    EFFECTIVE_REPLAY_CAPACITY_FRACTION,
+    N_MACHINES,
+    PHYSICAL_CAPACITY_CORES,
+    POWER_SCENARIOS,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,7 +23,7 @@ DATA_RESULTS = DATA / "results"
 
 @dataclass(frozen=True)
 class HourlyInput:
-    """调度器的一个小时输入：能源价格/预测 + 在线负荷 + 批处理柔性 + 基座功率。"""
+    """调度器的一个小时输入：预测/实际能源、有效容量和柔性负荷。"""
 
     hour: int
     timestamp_utc: str
@@ -31,6 +36,11 @@ class HourlyInput:
     base_mw: float
     batch_baseline_mwh: float
     batch_window_mwh: float
+    actual_erco_solar_generation_mwh: float = 0.0
+    actual_erco_wind_generation_mwh: float = 0.0
+    batch_capacity_mw: float | None = None
+    effective_capacity_cores: float | None = None
+    workload_scale: float = 1.0
 
 
 def _energy_core_rows(window_csv: Path, core_hours: int) -> list[dict[str, str]]:
@@ -59,6 +69,31 @@ def _online_cores(stats_json: Path) -> float:
     return float(payload["online_static"]["online_reserved_cores"])
 
 
+def _effective_replay_scale(
+    envelope: list[dict[str, str]],
+    online_cores: float,
+    effective_capacity_fraction: float,
+) -> tuple[float, float]:
+    """以统一缩放使在线与批处理代理不超过有效回放容量。"""
+
+    if not 0.0 < effective_capacity_fraction <= 1.0:
+        raise ValueError("effective_capacity_fraction must be in (0, 1]")
+    effective_capacity_cores = (
+        PHYSICAL_CAPACITY_CORES * effective_capacity_fraction
+    )
+    raw_peak_cores = max(
+        online_cores
+        + max(
+            float(row["baseline_cores"] or 0.0),
+            float(row["flexible_window_energy_core_hours"] or 0.0),
+        )
+        for row in envelope
+    )
+    if raw_peak_cores <= 0.0:
+        return 1.0, effective_capacity_cores
+    return min(1.0, effective_capacity_cores / raw_peak_cores), effective_capacity_cores
+
+
 def build_hourly_input(
     window_csv: Path,
     envelope_csv: Path,
@@ -66,6 +101,7 @@ def build_hourly_input(
     *,
     core_days: int = 30,
     scenario: str = "base",
+    effective_capacity_fraction: float = EFFECTIVE_REPLAY_CAPACITY_FRACTION,
 ) -> list[HourlyInput]:
     """取一个能源窗口的 30 天核心期，与 workload 包络逐小时对齐并换算成 MW。"""
 
@@ -88,7 +124,17 @@ def build_hourly_input(
             f"{envelope_csv.name} has {len(envelope)} hours, need {core_hours}"
         )
 
-    online_mw = _online_cores(stats_json) * power_per_core_mw
+    raw_online_cores = _online_cores(stats_json)
+    workload_scale, effective_capacity_cores = _effective_replay_scale(
+        envelope,
+        raw_online_cores,
+        effective_capacity_fraction,
+    )
+    online_cores = raw_online_cores * workload_scale
+    online_mw = online_cores * power_per_core_mw
+    batch_capacity_mw = max(
+        0.0, (effective_capacity_cores - online_cores) * power_per_core_mw
+    )
 
     aligned: list[HourlyInput] = []
     for hour, energy_row in enumerate(energy):
@@ -116,12 +162,23 @@ def build_hourly_input(
                 base_mw=base_mw,
                 batch_baseline_mwh=(
                     float(workload_row["baseline_energy_core_hours"] or 0.0)
+                    * workload_scale
                     * power_per_core_mw
                 ),
                 batch_window_mwh=(
                     float(workload_row["flexible_window_energy_core_hours"] or 0.0)
+                    * workload_scale
                     * power_per_core_mw
                 ),
+                actual_erco_solar_generation_mwh=float(
+                    energy_row["erco_solar_generation_mwh"] or 0.0
+                ),
+                actual_erco_wind_generation_mwh=float(
+                    energy_row["erco_wind_generation_mwh"] or 0.0
+                ),
+                batch_capacity_mw=batch_capacity_mw,
+                effective_capacity_cores=effective_capacity_cores,
+                workload_scale=workload_scale,
             )
         )
     return aligned

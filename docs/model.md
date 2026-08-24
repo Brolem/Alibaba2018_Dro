@@ -1,179 +1,182 @@
-# 建模公式与映射
+# 目标风光储模型与不确定性口径
 
-> 本文档是 `docs/design.md` 的数学补充，给出完整优化模型与各类映射。公式用 LaTeX。
+> `scheduler.py` 已覆盖本模型的确定性日前基线：风光、BESS、有效回放容量、预测碳预算及实际风光碳回放。联合日块残差、SAA、静态 Γ-RO 与 DRO 仍是后续实现项；实现边界见 [design.md](design.md)。
 
-## 1. 符号
+## 1. 集合、单位和变量
 
-- 时间索引 $t = 0, \dots, T-1$，$T = 720$（30 天核心期）。
-- 决策变量（日前）：
-  - $b_t$：批处理可延迟功率（MW）；
-  - $g_t$：购电功率（MW）；
-  - $c_t, d_t$：BESS 充/放电功率（MW）；
-  - $e_t$：BESS 能量（MWh）。
-- 参数：
-  - $P^{\text{must}}$：必须满足的固定功率（在线 + 基座），MW；
-  - $B_t$：批处理基线能量（MWh/h）；
-  - $W_t$：柔性窗口能量上界（MWh）；
-  - $p_t$：日前电价（USD/MWh）；
-  - $\rho_t$：消费侧碳强度（kgCO₂/kWh）；
-  - $\pi_t$：本地 PV 出力（MW）；
-  - $G^{\max}, R^{\max}$：并网功率、爬坡上限；
-  - $P^{\text{BESS}}, E^{\text{BESS}}$：BESS 功率/能量；
-  - $\eta$：BESS 往返效率；
-  - $SOC^{\min}, SOC^{\max}, SOC^0$：SOC 下界/上界/初值。
+令 $t\in\mathcal T=\{1,\ldots,T\}$ 表示 1 小时调度时段。功率以 MW 计，能量以 MWh 计；碳强度在进入模型前统一换算为 kgCO$_2$/MWh。
 
-## 2. 确定性模型（LP）
+### 1.1 决策变量
 
-### 2.1 功率平衡
+- $u_t$：批处理执行量（core 或经固定映射后的 MW）；
+- $g_t$：电网购电功率；
+- $x_t^{ch},x_t^{dis}$：BESS 充、放电功率；$e_t$：BESS 能量；
+- $z_t^{PV},z_t^{W}$：光伏、风电弃电功率。
 
-$$g_t = P^{\text{must}} + b_t + c_t - d_t - \pi_t, \qquad \forall t$$
+### 1.2 主要参数
 
-$$g_t \ge 0$$
+- $l_t^{on}$：在线刚性负荷；$B_t$：批处理基线能量；$U_t$：聚合柔性窗口上界；
+- $p_t$：日前电价；$\hat c_t$、$c_t^{act}$：预测与实际消费侧碳强度；
+- $\hat P_t^{PV}$、$\hat P_t^{W}$：预测本地光伏、风电可用出力；
+- $G^{max}$、$R^{max}$：并网功率与爬坡上限；
+- $C^{eff}$：有效回放容量；
+- $P^{BESS}$、$E^{BESS}$、$\eta^{ch}$、$\eta^{dis}$：储能参数；
+- $c_{deg}$：按累计充、放电总吞吐量计的 BESS 衰减成本（USD/MWh）。
 
-### 2.2 批处理能量守恒与柔性包络
+在线和批处理若先以核数建模，再通过统一固定功率映射进入功率平衡；两种单位不得在同一个约束中混用。
 
-$$\sum_{t} b_t = \sum_t B_t$$
+## 2. 确定性日前模型
 
-$$0 \le b_t \le W_t, \qquad \forall t$$
+### 2.1 本地风光场景
 
-### 2.3 BESS
+给定容量 $K^{PV},K^W$ 和训练期固定参考值 $S^{ref},W^{ref}$：
 
-$$e_0 = SOC^0\, E^{\text{BESS}}$$
+\[
+\hat P_t^{PV}=K^{PV}\frac{\hat S_t}{S^{ref}},\qquad
+\hat P_t^{W}=K^{W}\frac{\hat W_t}{W^{ref}}.
+\]
 
-$$e_{t+1} = e_t + \sqrt{\eta}\, c_t - d_t / \sqrt{\eta}, \qquad \forall t$$
+$\hat S_t,\hat W_t$ 分别是 ERCO 系统太阳能和风电的日前预测。它们只提供本地反事实资源的形状；$K^{PV},K^W$ 是独立的场景参数。
 
-$$SOC^{\min} E^{\text{BESS}} \le e_t \le SOC^{\max} E^{\text{BESS}}$$
+### 2.2 功率平衡与弃电
 
-$$0 \le c_t,\ d_t \le P^{\text{BESS}}$$
+令 $P_t^{IT}(u_t)$ 表示在线负载、基座功率和批处理执行量对应的设施总负载。则
 
-$$e_T = e_0 \quad (\text{末态回到初态})$$
+\[
+g_t+(\hat P_t^{PV}-z_t^{PV})+(\hat P_t^W-z_t^W)+x_t^{dis}
+=P_t^{IT}(u_t)+x_t^{ch},\qquad \forall t,
+\]
 
-### 2.4 并网与爬坡
+\[
+0\le z_t^{PV}\le\hat P_t^{PV},\qquad
+0\le z_t^W\le\hat P_t^W,\qquad g_t\ge0.
+\]
 
-$$0 \le g_t \le G^{\max}, \qquad \forall t$$
+碳强度不进入该功率平衡。风光直接减少购电；碳只在购电之后用于排放核算。
 
-$$|g_t - g_{t-1}| \le R^{\max}, \qquad \forall t \ge 1$$
+### 2.3 批处理柔性与有效回放容量
 
-### 2.5 目标（词典序，两层）
+\[
+\sum_{t\in\mathcal T} E^{ba}(u_t)=\sum_{t\in\mathcal T}B_t,
+\qquad 0\le u_t\le U_t,
+\]
 
-第一层：最小化总购电成本
+\[
+l_t^{on}+u_t\le C^{eff},\qquad
+C^{eff}=\kappa C^{physical},\quad \kappa\in\{0.6,0.7,0.8\}.
+\]
 
-$$C^* = \min \sum_t p_t\, g_t$$
+批处理总能量守恒表示调度只改变执行时序，不凭空减少 IT 计算量。$C^{eff}$ 是为解决计划/预留负荷与物理容量不闭合而设的情景容量，不是实测利用率。
 
-第二层：在 1% 成本保护带内最小化碳
+### 2.4 储能、并网与爬坡
 
-$$\min \sum_t \rho_t\, g_t \qquad \text{s.t.} \quad \sum_t p_t\, g_t \le C^*\,(1 + 1\%)$$
+\[
+e_{t+1}=e_t+\eta^{ch}x_t^{ch}-x_t^{dis}/\eta^{dis},
+\]
 
-> 术语：这是“词典序（两次顺序求解）”，**不是**“两阶段 LP”（后者专指日前决策 + 实现后再调度的随机规划结构）。
+\[
+SOC^{min}E^{BESS}\le e_t\le SOC^{max}E^{BESS},\qquad
+0\le x_t^{ch},x_t^{dis}\le P^{BESS},
+\]
 
-## 3. Γ-budget 鲁棒扩展
+\[
+x_t^{ch}\le P^{BESS}z_t,\qquad
+x_t^{dis}\le P^{BESS}(1-z_t),\qquad z_t\in\{0,1\},
+\]
 
-### 3.1 算力侧（批处理总能量不确定）
+\[
+e_T=e_0,\qquad 0\le g_t\le G^{max},\qquad
+|g_t-g_{t-1}|\le R^{max}.
+\]
 
-不确定集：$E \in \left[E^{\text{nom}},\ E^{\text{nom}}(1+\delta)\right]$，$\Gamma \in [0,1]$ 为鲁棒预算。
+### 2.5 成本目标与碳预算
 
-鲁棒能量守恒：
+主问题不是加权多目标，而是成本最小化下的环境运行约束：
 
-$$\sum_t b_t = E^{\text{nom}}(1 + \Gamma\,\delta), \qquad E^{\text{nom}} = \sum_t B_t$$
+\[
+\min\ C_{op}=\sum_{t\in\mathcal T}p_tg_t\Delta t+
+c_{deg}\sum_{t\in\mathcal T}
+\left(x_t^{ch}+x_t^{dis}\right)\Delta t,
+\]
 
-其中 $\delta \approx 7.9\%$（由 8 天日能量 $CV=0.43$ 除以 $\sqrt{30}$ 估计）。
+\[
+\hat E^{CO_2}=\sum_{t\in\mathcal T}\hat c_tg_t
+\le \bar E(\eta_c)=(1-\eta_c)E^{base},
+\qquad \eta_c\in\{0,0.05,0.10\}.
+\]
 
-### 3.2 能源侧（PV 预测误差不确定）
+$E^{base}$ 必须由相同风光储容量、相同有效回放容量下的预定义基准调度产生，避免把资产容量差异误归因于算法。碳预算是研究情景，不应被写成外部政策或真实数据中心排放承诺。
 
-$$\pi_t = \pi_t^{\text{nom}}\,(1 - \Gamma_{pv}\,\varepsilon), \qquad
-\pi_t^{\text{nom}} = \Pi^{\text{cap}} \cdot \frac{s_t}{\max_t s_t}$$
+每个时段为 1 h（$\Delta t=1$），故上式中的 MW 数值对应本时段 MWh 吞吐。充电和放电均按实际吞吐量直接相加：一次 1 MWh 充电和一次 1 MWh 放电合计为 2 MWh 吞吐，不除以 2。主情景取 $c_{deg}=20$ USD/MWh 吞吐，敏感性取 $10/20/40$ USD/MWh 吞吐。它是用于检验调度对循环代价敏感性的研究参数，既不是 BESS CAPEX 年化，也不声称是特定市场的实测可变运维报价。二元变量 $z_t$ 强制每小时充、放电互斥。
 
-其中 $s_t$ 是 ERCO 系统太阳预测、$\Pi^{\text{cap}}$ 是本地 PV 容量、$\varepsilon \approx 24.3\%$（2024 太阳能 NMAE）、$\Gamma_{pv}\in[0,1]$。
+本文固定 $K^{PV}$、$K^W$、$P^{BESS}$ 和 $E^{BESS}$，只优化运行调度。因此，风光与储能的固定运维成本及年化投资成本未写入 $C_{op}$，也不参与成本降低率；在所有主比较方法中它们均为相同常数。$C_{op}$ 应解释为调度相关运行成本，而非总拥有成本、平准化成本或全生命周期成本。若比较不同装机容量，应按容量重算这些固定成本并作为独立经济性指标报告。
 
-### 3.3 逐小时预算鲁棒（能源侧 Bertsimas–Sim robust counterpart）
+结果中应分列购电成本、BESS 吞吐衰减成本和调度相关运行成本 $C_{op}$。成本降低率以该调度相关口径相对相同资产配置的基线计算，不能用固定运维或年化投资成本作为分母。若使用鲁棒保护函数，其值只作为算法的最坏情形保护代价单列报告，不与实际或日前调度相关运行成本混合。
 
-不确定集：PV 短缺 $\delta_t \in [0,\ \varepsilon\pi_t^{\text{nom}}]$，预算 $\sum_t \delta_t / (\varepsilon\pi_t^{\text{nom}}) \le \Gamma_{pv}$。
+事后以实际资源和实际碳强度核算：
 
-名义购电 $g_t^{\text{nom}} = L_t - \pi_t^{\text{nom}}$，实际购电 $g_t = g_t^{\text{nom}} + \delta_t$，其中 $L_t = P^{\text{must}} + b_t + c_t - d_t$。
+\[
+E_{act}^{CO_2}=\sum_t c_t^{act}g_t^{act}.
+\]
 
-鲁棒目标（最坏情形成本）：
+报告 $E_{act}^{CO_2}$、$E_{act}^{CO_2}>\bar E$ 的违反指示量及其跨场景频率。该指标是消费侧平均碳核算，不解释为边际减排。
 
-$$\min \sum_t p_t g_t^{\text{nom}} + \Gamma_{pv}\, w + \sum_t r_t$$
+## 3. 双侧不确定性
 
-$$\text{s.t.}\quad w + r_t \ge p_t\,\varepsilon\,\pi_t^{\text{nom}},\ \forall t;\qquad w,\ r_t \ge 0$$
+### 3.1 算力侧
 
-其中 $w + \sum_t r_t$ 的极小值正是“$\Gamma_{pv}$ 个最大的 $p_t\varepsilon\pi_t^{\text{nom}}$ 之和”（保护函数线性化）。
+令 $\xi^L$ 表示批处理到达、时长、能量需求和可调度窗口的偏差。其作用是改变 $B_t$、$U_t$ 或任务集合；在线刚性负荷不作为第三种主不确定性。若加入在线负荷冲击，只作为额外压力测试：
 
-鲁棒并网：$g_t^{\text{nom}} + \varepsilon\pi_t^{\text{nom}} \le G^{\max},\ \forall t$。
+\[
+l_t^{on,stress}=(1+\delta^{on})l_t^{on},\qquad
+\delta^{on}\in\{0.05,0.10,0.15\}.
+\]
 
-> 注意：这里 $\Gamma_{pv}$ 是“发生全额短缺的小时数预算”（$0\sim 720$），与 §3.2 的标量 $\Gamma_{pv}\in[0,1]$ 语义不同。
+### 3.2 联合能源侧
 
-### 3.4 样本平均近似（SAA）
+以同一日前预测器产生的 2024 有符号残差构造每天的 24 小时向量：
 
-$S$ 个场景，短缺因子 $z_t^s \in [0,\varepsilon]$（随机采样）；共享批处理与 BESS，逐场景购电 $g_t^s$：
+\[
+\xi_d^E=
+\bigl(r_{d,1:24}^{PV},r_{d,1:24}^{W},r_{d,1:24}^{C}\bigr),
+\]
 
-$$\min \frac{1}{S}\sum_{s=1}^{S}\sum_{t} p_t\, g_t^s$$
+\[
+\tilde P_t^{PV}=\max(0,\hat P_t^{PV}+r_t^{PV}),\quad
+\tilde P_t^W=\max(0,\hat P_t^W+r_t^W),\quad
+\tilde c_t=\max(0,\hat c_t+r_t^C).
+\]
 
-$$\text{s.t.}\quad g_t^s = L_t - \pi_t^{\text{nom}}(1 - z_t^s),\quad 0 \le g_t^s \le G^{\max},\ \text{爬坡}$$
+日块使风、光、碳误差的日内结构和互相关性随场景共同进入模型。碳误差影响碳预算风险；风光误差影响功率、SOC 和并网可行性。
 
-这是“here-and-now（批处理/BESS）+ wait-and-see（购电）”的两阶段随机规划。
+### 3.3 比较方法与所提方法
 
-## 4. 各种映射
+- **确定性**：只使用预测值；
+- **SAA**：从 2024 联合日块经验分布抽取场景；
+- **静态 Γ-RO**：按预定义的边际误差界和预算保护，不主张保留全部相关性；
+- **所提联合方法**：以联合日块经验分布 $\widehat{\mathbb P}_{2024}$ 为中心构造分布歧义集，例如
 
-### 4.1 CPU 任务 → 核需求
+\[
+\mathcal P_\varepsilon=
+\left\{\mathbb Q:\ W_1(\mathbb Q,\widehat{\mathbb P}_{2024})\le\varepsilon\right\}.
+\]
 
-批处理任务 $i$ 的核需求与能量：
+其中距离半径 $\varepsilon$ 和碳/可行性风险水平必须仅用 2024 验证选择，并在 2025 四窗口保持冻结。最终采用 Wasserstein-DRO、分布鲁棒机会约束或等价凸近似前，必须在实现设计中写明其精确形式、可解性和标定规则；不能仅凭“有残差”称为 DRO。
 
-$$q_i = \frac{\text{plan\_cpu}_i}{100} \times \text{instance\_num}_i \quad [\text{cores}]$$
+## 4. 回放与评价
 
-$$E_i = q_i \times \frac{\text{duration}_i}{3600} \quad [\text{core-hours}]$$
+日前决策只接触预测量。样本外回放将实际风光用于资源可用性，将实际碳强度用于排放核算；所有方法使用相同的容量、基线和工作负载种子。
 
-小时基线能量：
+最低报告项为：
 
-$$B_t = \sum_{i} q_i \cdot \frac{\text{overlap}_{i,t}}{3600}$$
+1. 日前调度相关运行成本（购电与 BESS 吞吐衰减成本分列）与事后购电量；
+2. 实际消费侧核算碳排放与碳预算违反率；
+3. 并网/爬坡、SOC、容量和批处理能量完成的违反率；
+4. 弃风、弃光及风光利用率；
+5. 求解时间、最优性缺口和全部参数/随机种子。
 
-在线必须满足核数（静态预留）：
+四个 2025 窗口是固定工作负载下的能源情景外推检验。它们不能证明工作负载季节性，也不能替代真实本地风光或真实数据中心遥测。
 
-$$\bar{c}^{\text{online}} = \frac{1}{100} \sum_j \max_t \text{cpu\_request}_{j,t}$$
+## 5. 与当前代码的差异
 
-### 4.2 核 → 服务器功率（线性模型）
-
-$$P^{\text{IT}}(t) = N^{\text{mach}} P^{\text{idle}} + \left(\bar{c}^{\text{online}} + \hat{b}_t\right) P^{\text{core}}$$
-
-$$P^{\text{fac}}(t) = \text{PUE} \cdot P^{\text{IT}}(t)$$
-
-换算成调度器里的量：
-
-$$P^{\text{must}} = \text{PUE}\left(N^{\text{mach}} P^{\text{idle}} + \bar{c}^{\text{online}} P^{\text{core}}\right) / 10^6$$
-
-$$B_t^{\text{[MWh]}} = B_t^{\text{[core-h]}} \cdot \text{PUE} \cdot P^{\text{core}} / 10^6$$
-
-> 局限：无 usage 表，`plan_cpu`/`cpu_request` 是计划/预留值；`online 362k + batch 平均 514k > 物理 387k`，约超订 2.3 倍；$P^{\text{core}}$ 是场景值。绝对 MW 是场景量级，只有相对下降比例可信。
-
-### 4.3 workload → 柔性包络
-
-基线：$B_t$（任务能量按小时累加）。
-
-带 slack 的窗口能量：
-
-$$W_t = \sum_i E_i\, \mathbb{1}\!\left[t \in \left[\left\lfloor \tfrac{s_i}{3600}\right\rfloor,\ \left\lfloor \tfrac{e_i + \rho\,\text{dur}_i}{3600}\right\rfloor\right]\right]$$
-
-其中 $s_i, e_i$ 是任务起止秒、$\rho$ 是 slack 比例、$\text{dur}_i = e_i - s_i$。
-
-### 4.4 蒙特卡洛扩展（8 天 → 30 天）
-
-$$n_t \sim \text{Poisson}\!\left(\lambda_{t \bmod 192}\right)$$
-
-$$(d_k, E_k) \sim \hat{P}(\text{duration}, \text{energy})$$
-
-其中 $\lambda_h$ 是 8 天逐小时到达率，$\hat{P}$ 是从真实任务记录有放回重采样的经验联合分布（保留时长—能量相关）。
-
-### 4.5 残差 → 不确定集
-
-- 算力侧：$E \in \left[E^{\text{nom}},\ E^{\text{nom}}(1+\delta)\right]$。
-- 能源侧：$\pi_t = \pi_t^{\text{nom}}(1 - \Gamma_{pv}\varepsilon)$，$\varepsilon$ 来自 2024 残差 NMAE。
-
-## 5. 功率映射的已知问题
-
-1. 无 `machine_usage` / `container_usage`，用的是计划/预留值，不是实测利用率。
-2. `online + batch` 约超订 2.3 倍（上界代理，非同时实际占用）。
-3. `P^{core} = 3W` 是场景假设，绝对 MW 不可信，相对下降比例可信。
-
-更正确的映射需要 usage 表 + SPECpower 型：
-
-$$P_{\text{machine}} = P_{\text{idle}} + (P_{\max} - P_{\text{idle}}) \times \text{utilization}$$
+当前实现使用 2024 P99 固定参考值缩放的预测/实际风光、BESS 吞吐衰减成本、充放电互斥、统一有效容量缩放、预测碳预算、弃电变量与固定日前计划的实际回放。它尚未实现联合残差 DRO、场景 SAA、静态 Γ-RO 和实时 BESS 再调度。因此当前四窗口输出只验证确定性主线基准及预测—实际偏差，不能支持不确定性方法优劣的结论。
