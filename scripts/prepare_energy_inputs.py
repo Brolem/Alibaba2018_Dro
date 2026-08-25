@@ -18,11 +18,13 @@ from alibaba2018_dro.eia_history import (
     load_erco_history,
     load_houston_dam_prices,
 )
+from alibaba2018_dro.residuals import write_joint_residuals
 
 
 RAW_ENERGY_DIRECTORY = PROJECT_ROOT / "data" / "raw" / "energy"
 PROCESSED_ENERGY_DIRECTORY = PROJECT_ROOT / "data" / "processed" / "energy"
 DEFAULT_OUTPUT_DIRECTORY = PROCESSED_ENERGY_DIRECTORY / "windows"
+DEFAULT_RESIDUAL_DIRECTORY = PROCESSED_ENERGY_DIRECTORY / "residuals"
 
 
 def _read_csv_rows(path: Path) -> list[dict[str, str]]:
@@ -98,6 +100,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_OUTPUT_DIRECTORY,
         help="Version-controlled compact energy input directory.",
     )
+    parser.add_argument(
+        "--residual-dir",
+        type=Path,
+        default=DEFAULT_RESIDUAL_DIRECTORY,
+        help="Version-controlled 2024 daily joint residual directory.",
+    )
     return parser.parse_args(argv)
 
 
@@ -109,6 +117,15 @@ def main(argv: list[str] | None = None) -> None:
     if len(source_hashes) != len(args.source):
         raise ValueError("duplicate --source identifiers are not allowed")
     eia_history = load_erco_history(args.eia_history)
+    eia_sha256 = sha256_file(args.eia_history)
+    registered_eia_hash = source_hashes.get("eia_930_erco")
+    if registered_eia_hash is not None and registered_eia_hash != eia_sha256:
+        raise ValueError("eia_930_erco --source does not match --eia-history")
+    residual_manifest = write_joint_residuals(
+        history=eia_history,
+        output_directory=args.residual_dir,
+        source_sha256=eia_sha256,
+    )
     december_2024 = build_december_context(
         load_houston_dam_prices(args.ercot_2024_dam, year=2024),
         eia_history,
@@ -120,10 +137,12 @@ def main(argv: list[str] | None = None) -> None:
         eia_history=eia_history,
         output_directory=args.output_dir,
         source_hashes=source_hashes,
+        forecast_selection=residual_manifest["ridge_selection"],
     )
     print(
-        "materialized "
-        f"{len(manifest['outputs'])} paper energy inputs in {args.output_dir}"
+        f"materialized {residual_manifest['usable_24h_block_count']} usable 2024 "
+        f"residual days in {args.residual_dir} and {len(manifest['outputs'])} "
+        f"paper energy inputs in {args.output_dir}"
     )
 
 

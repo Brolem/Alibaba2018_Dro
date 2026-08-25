@@ -12,6 +12,7 @@ Thumbs.db
 
 # 原始数据（体积较大或可重新下载，不进入版本控制）
 data/raw/energy/eia_930_erco_full_history.xlsx
+data/raw/energy/ercot_2024_historical_dam_load_zone_and_hub_prices.zip
 data/raw/energy/ercot_2025_historical_dam_load_zone_and_hub_prices.zip
 data/raw/workload/*.tar.gz
 data/raw/workload/batch_task.csv

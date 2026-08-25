@@ -28,13 +28,23 @@ CARBON_BUDGET_REDUCTIONS = (0.00, 0.05, 0.10)
 DEFAULT_CARBON_BUDGET_REDUCTION = 0.05
 # 有效容量缩放不改变物理机队的 idle 功率；这是已登记的功率情景口径。
 IDLE_POWER_BASIS = "fixed_physical_fleet"
-# 预测器超参：90 天滚动历史、48 小时信息保护期、28 天同小时基线、2024 验证
+# 预测器超参：90 天滚动历史、48 小时信息保护期、28 天同小时基线。
+# 预测超参数只用 2023 年选择；2024 年完整残差留给统一的不确定性标定。
 FORECAST_HISTORY_DAYS = 90
 FORECAST_INFORMATION_PROTECTION_HOURS = 48
 FORECAST_BASELINE_DAYS = 28
-FORECAST_VALIDATION_YEAR = 2024
 RIDGE_ALPHAS = (0.01, 0.1, 1.0, 10.0, 100.0)
 FORECAST_METHOD = "direct_ridge_90d_v1"
+RIDGE_SELECTION_YEAR = 2023
+RIDGE_SELECTION_START = dt.date(RIDGE_SELECTION_YEAR, 1, 1)
+RIDGE_SELECTION_END = dt.date(RIDGE_SELECTION_YEAR, 12, 31)
+ENERGY_RESIDUAL_YEAR = 2024
+# 三折均各含一个冬、春、夏、秋月份；SAA/RO/DRO 共用相同留出折。
+ENERGY_SEASONAL_CV_FOLDS = {
+    "fold_1": (1, 4, 7, 10),
+    "fold_2": (2, 5, 8, 11),
+    "fold_3": (3, 6, 9, 12),
+}
 # 四个固定 2025 主窗口（1/4/7/10 月）
 PAPER_WINDOW_STARTS = (
     dt.date(2025, 1, 1),

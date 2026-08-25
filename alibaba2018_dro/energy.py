@@ -27,7 +27,7 @@ from .config import (
     PAPER_WINDOW_STARTS,
     TAIL_HOURS,
 )
-from .forecasting import forecast_delivery_day, validate_ridge_2024
+from .forecasting import forecast_delivery_day, validate_ridge_selection
 
 
 _TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
@@ -336,13 +336,14 @@ def write_study_inputs(
     output_directory: Path,
     source_hashes: Mapping[str, str],
     forecast_provider: ForecastProvider = forecast_delivery_day,
+    forecast_selection: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """物化四个固定窗口输入，仅为核心期与结算尾生成无泄漏预测。"""
 
-    validation = validate_ridge_2024(eia_history)
+    selection = dict(forecast_selection or validate_ridge_selection(eia_history))
     ridge_alphas = {
         column: float(metrics["selected_alpha"])
-        for column, metrics in validation["targets"].items()
+        for column, metrics in selection["targets"].items()
     }
     materialized_rows: dict[str, list[dict[str, object]]] = {}
     for window_start in PAPER_WINDOW_STARTS:
@@ -398,9 +399,9 @@ def write_study_inputs(
             "information_protection_hours": FORECAST_INFORMATION_PROTECTION_HOURS,
             "baseline_method": "same_hour_median_28d_v1",
             "predicted_row_count": predicted_row_count,
-            "validation_year": validation["validation_year"],
+            "selection_year": selection["selection_year"],
             "ridge_alphas": ridge_alphas,
-            "validation": validation,
+            "selection": selection,
         },
         "sources": _validate_source_hashes(source_hashes),
         "outputs": dict(sorted(outputs.items())),

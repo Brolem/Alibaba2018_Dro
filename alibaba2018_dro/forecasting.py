@@ -6,6 +6,7 @@ import datetime as dt
 import math
 from bisect import bisect_right
 from collections.abc import Mapping, Sequence
+from functools import lru_cache
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -15,7 +16,9 @@ from .config import (
     FORECAST_HISTORY_DAYS,
     FORECAST_INFORMATION_PROTECTION_HOURS,
     FORECAST_METHOD,
-    FORECAST_VALIDATION_YEAR,
+    RIDGE_SELECTION_END,
+    RIDGE_SELECTION_START,
+    RIDGE_SELECTION_YEAR,
     RIDGE_ALPHAS,
 )
 
@@ -33,6 +36,10 @@ FORECAST_COLUMNS = (
 )
 TARGET_TO_FORECAST = dict(zip(TARGET_COLUMNS, FORECAST_COLUMNS, strict=True))
 HourIndex = dict[tuple[str, int], tuple[list[dt.datetime], list[float]]]
+
+
+class ForecastUnavailableError(ValueError):
+    """表示源数据不足以为某一交割日生成完整预测。"""
 
 
 def _timestamp(value: object, *, label: str) -> dt.datetime:
@@ -81,7 +88,8 @@ def _history_by_timestamp(
     return result
 
 
-def _interval_endpoints(delivery_date: dt.date) -> list[dt.datetime]:
+@lru_cache(maxsize=None)
+def _interval_endpoints(delivery_date: dt.date) -> tuple[dt.datetime, ...]:
     """返回某个交割日所有小时区间的结束 UTC 时刻。"""
     local_start = dt.datetime.combine(delivery_date, dt.time(), tzinfo=CENTRAL)
     local_stop = dt.datetime.combine(
@@ -90,9 +98,12 @@ def _interval_endpoints(delivery_date: dt.date) -> list[dt.datetime]:
     start_utc = local_start.astimezone(dt.timezone.utc)
     stop_utc = local_stop.astimezone(dt.timezone.utc)
     hours = int((stop_utc - start_utc).total_seconds() // 3_600)
-    return [start_utc + dt.timedelta(hours=index) for index in range(1, hours + 1)]
+    return tuple(
+        start_utc + dt.timedelta(hours=index) for index in range(1, hours + 1)
+    )
 
 
+@lru_cache(maxsize=None)
 def _target_for_hour(delivery_date: dt.date, local_start_hour: int) -> dt.datetime | None:
     """返回某个当地起始小时对应的目标结束时刻。"""
     for endpoint in _interval_endpoints(delivery_date):
@@ -101,6 +112,7 @@ def _target_for_hour(delivery_date: dt.date, local_start_hour: int) -> dt.dateti
     return None
 
 
+@lru_cache(maxsize=None)
 def _cutoff_for_delivery_date(delivery_date: dt.date) -> dt.datetime:
     """返回某个交割日对应的日前截止时刻（前一天 18:00 Central）。"""
     cutoff_local = dt.datetime.combine(
@@ -217,7 +229,7 @@ def _training_data(
                     targets.append(target_value)
         candidate_date -= dt.timedelta(days=1)
     if len(rows) < FORECAST_BASELINE_DAYS:
-        raise ValueError(
+        raise ForecastUnavailableError(
             f"insufficient lookback history for {column}: {len(rows)} daily samples"
         )
     prediction_feature = _feature_vector(
@@ -228,7 +240,9 @@ def _training_data(
         column=column,
     )
     if prediction_feature is None:
-        raise ValueError(f"insufficient prediction features for {column}")
+        raise ForecastUnavailableError(
+            f"insufficient prediction features for {column}"
+        )
     return np.vstack(rows), np.asarray(targets, dtype=float), prediction_feature
 
 
@@ -263,6 +277,7 @@ def _is_local_night(target_end: dt.datetime) -> bool:
 
 def _forecast_rows(
     values_by_timestamp: Mapping[dt.datetime, Mapping[str, float]],
+    hour_index: HourIndex,
     *,
     cutoff: dt.datetime,
     delivery_date: dt.date,
@@ -270,7 +285,6 @@ def _forecast_rows(
 ) -> list[dict[str, object]]:
     """为一个交割日逐小时生成预测行。"""
     known_end = cutoff - dt.timedelta(hours=FORECAST_INFORMATION_PROTECTION_HOURS)
-    hour_index = _build_hour_index(values_by_timestamp)
     rows: list[dict[str, object]] = []
     for target_end in _interval_endpoints(delivery_date):
         row: dict[str, object] = {
@@ -306,26 +320,31 @@ def _forecast_rows(
 def select_ridge_alpha(
     history: Sequence[Mapping[str, object]],
 ) -> dict[str, float]:
-    """仅用固定 2024 滚动起点，为每个信号选择 alpha。"""
+    """仅用 2023 年逐日滚动起点，为每个信号选择 alpha。"""
 
-    validation = validate_ridge_2024(history)
+    validation = validate_ridge_selection(history)
     return {
         column: float(metrics["selected_alpha"])
         for column, metrics in validation["targets"].items()
     }
 
 
-def validate_ridge_2024(
+def validate_ridge_selection(
     history: Sequence[Mapping[str, object]],
+    *,
+    origin_dates: Sequence[dt.date] | None = None,
 ) -> dict[str, object]:
-    """在固定月度滚动起点上评估 Ridge，并与 28 天中位数基线比较。"""
+    """在登记的 2023 年逐日滚动起点上评估 Ridge 与中位数基线。"""
 
     values_by_timestamp = _history_by_timestamp(history)
     hour_index = _build_hour_index(values_by_timestamp)
-    origins = [
-        dt.date(FORECAST_VALIDATION_YEAR, month, 15)
-        for month in range(1, 13)
-    ]
+    origins = list(origin_dates or ridge_selection_dates())
+    if not origins:
+        raise ValueError("Ridge validation origin_dates must not be empty")
+    if any(date.year != RIDGE_SELECTION_YEAR for date in origins):
+        raise ValueError(
+            f"Ridge validation origin_dates must all be in {RIDGE_SELECTION_YEAR}"
+        )
     errors = {
         column: {alpha: [] for alpha in RIDGE_ALPHAS}
         for column in TARGET_COLUMNS
@@ -396,7 +415,9 @@ def validate_ridge_2024(
     target_metrics: dict[str, dict[str, float | int]] = {}
     for column in TARGET_COLUMNS:
         if not baseline_errors[column]:
-            raise ValueError(f"no usable 2024 validation samples for {column}")
+            raise ValueError(
+                f"no usable {RIDGE_SELECTION_YEAR} validation samples for {column}"
+            )
         mae_by_alpha = {
             alpha: float(np.mean(column_errors))
             for alpha, column_errors in errors[column].items()
@@ -420,11 +441,19 @@ def validate_ridge_2024(
             "median_nmae": median_mae / magnitude if magnitude > 0.0 else 0.0,
         }
     return {
-        "validation_year": FORECAST_VALIDATION_YEAR,
+        "selection_year": RIDGE_SELECTION_YEAR,
+        "purpose": "ridge_alpha_selection",
         "origin_dates": [date.isoformat() for date in sorted(used_origins)],
         "origin_count": len(used_origins),
         "targets": target_metrics,
     }
+
+
+def ridge_selection_dates() -> tuple[dt.date, ...]:
+    """返回用于 Ridge 超参数选择的完整 2023 年日期。"""
+
+    days = (RIDGE_SELECTION_END - RIDGE_SELECTION_START).days + 1
+    return tuple(RIDGE_SELECTION_START + dt.timedelta(days=offset) for offset in range(days))
 
 
 def forecast_delivery_day(
@@ -448,10 +477,43 @@ def forecast_delivery_day(
         raise ValueError("Ridge alpha values must cover every forecast target")
     return _forecast_rows(
         values_by_timestamp,
+        hour_index,
         cutoff=cutoff,
         delivery_date=target_date,
         alphas=chosen_alphas,
     )
+
+
+def forecast_delivery_dates(
+    history: Sequence[Mapping[str, object]],
+    *,
+    delivery_dates: Sequence[dt.date],
+    alphas: Mapping[str, float],
+    skip_unavailable: bool = False,
+) -> list[dict[str, object]]:
+    """共用一次历史索引，为多个交割日统一生成无泄漏逐小时预测。"""
+
+    chosen_alphas = dict(alphas)
+    if set(chosen_alphas) != set(TARGET_COLUMNS):
+        raise ValueError("Ridge alpha values must cover every forecast target")
+    values_by_timestamp = _history_by_timestamp(history)
+    hour_index = _build_hour_index(values_by_timestamp)
+    rows: list[dict[str, object]] = []
+    for delivery_date in delivery_dates:
+        try:
+            rows.extend(
+                _forecast_rows(
+                    values_by_timestamp,
+                    hour_index,
+                    cutoff=_cutoff_for_delivery_date(delivery_date),
+                    delivery_date=delivery_date,
+                    alphas=chosen_alphas,
+                )
+            )
+        except ForecastUnavailableError:
+            if not skip_unavailable:
+                raise
+    return rows
 
 
 def median_baseline(

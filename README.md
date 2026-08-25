@@ -117,7 +117,7 @@ c_{\mathrm{deg}}
 | 算力容量 | 有效回放容量 $\kappa=0.7$ 与统一缩放 | $\kappa\in\{0.6,0.7,0.8\}$ 敏感性 |
 | 结果 | 四窗口确定性主线基准 | 不确定性方法的统一比较结果 |
 
-当前主线入口为 `scripts/run_four_windows.py`，输出 `data/results/four_windows_mainline_summary.csv`。下一阶段只需新增并冻结 2024 年风光碳联合日块残差，再将 SAA、静态 Γ-RO 与所提方法接到同一日前—实际回放接口；在此之前不使用 “DRO” 描述当前确定性基准。
+当前主线入口为 `scripts/run_four_windows.py`，输出 `data/results/four_windows_mainline_summary.csv`。预测参数已使用 2023 年全年选择；2024 年已生成 362 个可用风光碳联合日块，并按季节平衡三折登记。下一阶段将 SAA、静态 Γ-RO 与所提方法接到同一日前—实际回放接口；在实现并比较这些方法前，不使用 “DRO” 描述当前确定性基准。
 
 ## 7. 诚实边界
 

@@ -19,3 +19,14 @@ ERCOT 工作簿按 `Jan` 至 `Dec` 分表，字段为 `Delivery Date`、`Hour En
 EIA 工作簿的 `Published Hourly Data` 表含 `UTC time`、`Local date`、`Local time`、`Time zone`、`Demand`、`NG: SUN`、`NG: WND` 和 `CO2 Emissions Intensity for Consumed Electricity` 等已发布列。正式处理阶段以 `UTC time` 作为跨数据源对齐的主时间索引，并显式处理时区与夏令时；不得跨当地日期通过全表行号拼接 ERCOT 与 EIA 数据。
 
 风、光和碳字段是 ERCOT 平衡区系统信号，不能表述为 Houston 本地发电或本地边际排放。
+
+### 预测与残差年份覆盖核验
+
+同一个 `eia_930_erco_full_history.xlsx` 已包含所需的 2023/2024 数据，无需另行下载年度文件：
+
+| 当地年份 | 小时数 | 日期数 | 太阳缺失 | 风电缺失 | 碳强度缺失 | 用途 |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| 2023 | 8,760 | 365 | 0 | 0 | 6 | Ridge 超参数选择 |
+| 2024 | 8,784 | 366 | 0 | 0 | 1 | 全年联合残差与季节平衡交叉验证 |
+
+2024 年唯一缺失为 `2024-03-28T21:00:00Z` 的消费侧碳强度。派生流程不插值：含缺失实际值的日块标记为 `missing_actual`，因最近 24 小时预测特征不完整而无法预测的交割日标记为 `forecast_unavailable`。

@@ -4,6 +4,7 @@
 
 - `ercot_2025_houston_hourly.csv`：共享 2025 年度小时表。
 - `windows/`：四个 1062 小时无泄漏论文窗口及其输入清单。
+- `residuals/`：2024 年风、光、碳逐小时联合残差及审计清单。
 
 ## 共享年度表：ERCOT 2025 Houston
 
@@ -41,3 +42,18 @@
 | `inputs_manifest.json` | schema 版本、窗口结构、来源与输出 SHA-256、2024 Ridge 验证结果 |
 
 窗口 CSV 的正式列顺序与 `alibaba2018_dro/config.py` 的 `ENERGY_INPUT_COLUMNS` 一致；`period_role` 取值 `context` / `core` / `settlement_tail`。复现时用 `scripts/prepare_energy_inputs.py --source ...` 重新生成并核对 `inputs_manifest.json` 里的输出哈希。
+
+Ridge 参数只用 2023 年全年逐日滚动起点选择；旧清单中的 12 个 2024 月度起点已经废弃，不得用于论文结论。2024 年全部可预测日期统一生成残差，并按月份分为 `fold_1={1,4,7,10}`、`fold_2={2,5,8,11}`、`fold_3={3,6,9,12}`。SAA、RO、DRO 必须使用相同留出折选择各自参数，选定后再用全部可用 2024 日块重拟合。
+
+## 2024 联合残差（residuals/）
+
+`joint_residuals_2024.csv` 共 8,760 行，其中 8,759 行三类实际值和预测值完整；形成 362 个可用 24 小时联合日块。审计清单 `residuals_manifest.json` 登记以下排除项：
+
+| 交割日 | 原因 |
+| --- | --- |
+| 2024-03-10 | DST，23 小时 |
+| 2024-03-28 | 一小时实际碳强度缺失 |
+| 2024-03-31 | 最近 24 小时预测特征含上述缺失值，完整预测不可用 |
+| 2024-11-03 | DST，25 小时 |
+
+三个季节平衡折分别含 123、120、119 个可用日块。原始缺失值不插值、不补零；所有排除原因和输出 SHA-256 均保存在清单中。

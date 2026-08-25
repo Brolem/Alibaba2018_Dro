@@ -33,11 +33,13 @@ except ImportError:
 try:
     from alibaba2018_dro.forecasting import (
         forecast_delivery_day,
-        validate_ridge_2024,
+        ridge_selection_dates,
+        validate_ridge_selection,
     )
 except ImportError:
     forecast_delivery_day = None
-    validate_ridge_2024 = None
+    ridge_selection_dates = None
+    validate_ridge_selection = None
 
 try:
     from alibaba2018_dro.eia_history import (
@@ -53,6 +55,31 @@ except ImportError:
 
 CENTRAL = ZoneInfo("America/Chicago")
 _TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+SYNTHETIC_ALPHAS = {
+    "erco_solar_generation_mwh": 1.0,
+    "erco_wind_generation_mwh": 1.0,
+    "erco_consumed_co2_intensity_lbs_per_kwh": 1.0,
+}
+
+
+def synthetic_validation() -> dict[str, object]:
+    return {
+        "selection_year": 2023,
+        "purpose": "ridge_alpha_selection",
+        "origin_dates": ["2023-11-15"],
+        "origin_count": 1,
+        "targets": {
+            column: {
+                "selected_alpha": alpha,
+                "sample_count": 24,
+                "ridge_mae": 0.0,
+                "ridge_nmae": 0.0,
+                "median_mae": 0.0,
+                "median_nmae": 0.0,
+            }
+            for column, alpha in SYNTHETIC_ALPHAS.items()
+        },
+    }
 
 
 def _energy_row(timestamp: dt.datetime) -> dict[str, object]:
@@ -105,6 +132,14 @@ def synthetic_history_rows() -> list[dict[str, object]]:
             }
         )
     return rows
+
+
+def synthetic_selection_history_rows() -> list[dict[str, object]]:
+    """覆盖一个2023选参起点所需的训练历史，并保留未来观测。"""
+
+    start = dt.datetime(2023, 6, 1, 0)
+    hours = int((dt.datetime(2024, 1, 2, 0) - start).total_seconds() // 3_600)
+    return [_energy_row(start + dt.timedelta(hours=offset)) for offset in range(hours)]
 
 
 def synthetic_forecaster(
@@ -257,6 +292,7 @@ class EnergyInputTests(unittest.TestCase):
             history,
             cutoff_utc=cutoff,
             delivery_date="2025-04-01",
+            alphas=SYNTHETIC_ALPHAS,
         )
         protected_timestamp = "2025-03-30T01:00:00Z"
         modified = [dict(row) for row in history]
@@ -270,6 +306,7 @@ class EnergyInputTests(unittest.TestCase):
             modified,
             cutoff_utc=cutoff,
             delivery_date="2025-04-01",
+            alphas=SYNTHETIC_ALPHAS,
         )
 
         self.assertEqual(original, protected)
@@ -281,6 +318,7 @@ class EnergyInputTests(unittest.TestCase):
             synthetic_history_rows(),
             cutoff_utc="2025-04-01T00:00:00Z",
             delivery_date="2025-04-01",
+            alphas=SYNTHETIC_ALPHAS,
         )
 
         self.assertEqual(len(forecasts), 24)
@@ -300,25 +338,35 @@ class EnergyInputTests(unittest.TestCase):
             if local_start_hour < 6 or local_start_hour >= 20:
                 self.assertEqual(row["forecast_erco_solar_generation_mwh"], 0.0)
 
-    def test_ridge_validation_uses_only_2024_and_reports_baseline_metrics(self) -> None:
-        validator = _require_implementation(validate_ridge_2024)
-        history = synthetic_history_rows()
+    def test_ridge_selection_uses_only_2023_and_reports_baseline_metrics(self) -> None:
+        validator = _require_implementation(validate_ridge_selection)
+        history = synthetic_selection_history_rows()
 
-        original = validator(history)
+        origin_dates = [dt.date(2023, 11, 15)]
+        original = validator(history, origin_dates=origin_dates)
         modified = [dict(row) for row in history]
         for row in modified:
-            if str(row["local_date"]).startswith("2025-"):
+            if str(row["local_date"]).startswith("2024-"):
                 row["erco_wind_generation_mwh"] = 999_999.0
-        protected = validator(modified)
+        protected = validator(modified, origin_dates=origin_dates)
 
         self.assertEqual(original, protected)
-        self.assertEqual(original["validation_year"], 2024)
+        self.assertEqual(original["selection_year"], 2023)
         self.assertGreater(original["origin_count"], 0)
         for metrics in original["targets"].values():
             self.assertIn(metrics["selected_alpha"], (0.01, 0.1, 1.0, 10.0, 100.0))
             self.assertGreater(metrics["sample_count"], 0)
             self.assertGreaterEqual(metrics["ridge_mae"], 0.0)
             self.assertGreaterEqual(metrics["median_mae"], 0.0)
+
+    def test_ridge_selection_uses_every_2023_day(self) -> None:
+        date_builder = _require_implementation(ridge_selection_dates)
+
+        dates = date_builder()
+
+        self.assertEqual(len(dates), 365)
+        self.assertEqual(dates[0], dt.date(2023, 1, 1))
+        self.assertEqual(dates[-1], dt.date(2023, 12, 31))
 
     def test_shared_annual_table_keeps_unpublished_renewables_empty(
         self,
@@ -400,6 +448,7 @@ class EnergyInputTests(unittest.TestCase):
                 output_directory=output_directory,
                 source_hashes={"eia_930_erco": "A" * 64},
                 forecast_provider=synthetic_forecaster,
+                forecast_selection=synthetic_validation(),
             )
 
             expected_files = {
@@ -432,7 +481,7 @@ class EnergyInputTests(unittest.TestCase):
             self.assertEqual(manifest_payload["sources"], manifest["sources"])
             self.assertEqual(manifest_payload["forecast"]["method"], "direct_ridge_90d_v1")
             self.assertEqual(manifest_payload["forecast"]["predicted_row_count"], 4 * 891)
-            self.assertEqual(manifest_payload["forecast"]["validation_year"], 2024)
+            self.assertEqual(manifest_payload["forecast"]["selection_year"], 2023)
             self.assertEqual(
                 set(manifest_payload["forecast"]["ridge_alphas"]),
                 {
@@ -443,7 +492,7 @@ class EnergyInputTests(unittest.TestCase):
             )
             self.assertIn(
                 "median_mae",
-                manifest_payload["forecast"]["validation"]["targets"]
+                manifest_payload["forecast"]["selection"]["targets"]
                 ["erco_wind_generation_mwh"],
             )
             self.assertNotIn(str(output_directory), json.dumps(manifest_payload))
@@ -465,6 +514,7 @@ class EnergyInputTests(unittest.TestCase):
         self.assertIn("--source", completed.stdout)
         self.assertIn("--eia-history", completed.stdout)
         self.assertIn("--ercot-2024-dam", completed.stdout)
+        self.assertIn("--residual-dir", completed.stdout)
         self.assertNotIn("--december-2024", completed.stdout)
 
 
