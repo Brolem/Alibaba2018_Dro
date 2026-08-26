@@ -26,7 +26,7 @@
 
 | 表 | 字段（按列顺序） | 用途 |
 | --- | --- | --- |
-| `batch_task` | `task_name`, `instance_num`, `job_name`, `task_type`, `status`, `start_time`, `end_time`, `plan_cpu`, `plan_mem` | 批处理作业：release/deadline、资源需求、DAG 依赖、任务类型 |
+| `batch_task` | `task_name`, `instance_num`, `job_name`, `task_type`, `status`, `start_time`, `end_time`, `plan_cpu`, `plan_mem` | 批处理作业：观测起止时刻、资源需求、DAG 依赖、任务类型；不提供真实提交时刻或 SLA/deadline |
 | `container_meta` | `container_id`, `machine_id`, `time_stamp`, `app_du`, `status`, `cpu_request`, `cpu_limit`, `mem_size` | 在线服务（LRA）容器：必须满足的在线负载 |
 | `machine_meta` | `machine_id`, `time_stamp`, `failure_domain_1`, `failure_domain_2`, `cpu_num`, `mem_size`, `status` | 服务器 CPU 核数与归一化内存容量 |
 
@@ -38,3 +38,5 @@
 - `machine_meta` 的容量字段是 `cpu_num` 与 `mem_size`（归一化 [0,100]），不是 `capacity_cpu`/`capacity_memory`。
 
 派生到柔性包络/不确定集的规则见 `data/processed/workload/README.md`。
+
+官方说明将 v2018 数据描述为约 4,000 台机器的 8 天追踪，并规定时间戳为相对追踪起点的秒数。逐日审计发现第 1 天高度集中于起点状态，因此派生实验负荷时将其作为左边界快照排除；该判断及原始文件哈希保存在 `workload_daily_audit.json`。官方字段说明见 [cluster-trace-v2018/trace_2018.md](https://github.com/alibaba/clusterdata/blob/master/cluster-trace-v2018/trace_2018.md)。

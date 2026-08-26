@@ -27,7 +27,7 @@ WINDOWS = ["2025-01-01", "2025-04-01", "2025-07-01", "2025-10-01"]
 
 
 def main() -> None:
-    envelope = DATA_PROCESSED / "workload" / "generated_envelope_30d.csv"
+    envelope = DATA_PROCESSED / "workload" / "nominal_workload_30d.csv"
     stats = DATA_PROCESSED / "workload" / "workload_stats.json"
     rows: list[dict[str, float | int | str | None]] = []
 

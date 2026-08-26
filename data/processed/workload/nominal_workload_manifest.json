@@ -1,0 +1,97 @@
+{
+  "method": "aggregate_workload_balanced_nominal_block_bootstrap_v2",
+  "note": "工作量由 batch_task 的观测时长与计划 CPU 计算；固定柔性窗口是独立的反事实研究参数，不是生产 SLA。所有方法共用唯一名义负荷；可选训练场景只用于不确定性标定。",
+  "source": {
+    "path": "data/raw/workload/batch_task.csv",
+    "sha256": "6346b0726c6e10466a585c67645af807b425b5be091caf410f5e1aff41a270bc",
+    "trace_days": 8,
+    "rows_read": 14295731,
+    "positive_work_rows": 13441614,
+    "zero_work_rows": 799086,
+    "negative_duration_rows": 54580,
+    "outside_trace_rows": 451,
+    "daily_total_work_core_hours": [
+      467517.800361,
+      13048241.176725,
+      14030357.388378,
+      14079263.291766,
+      18021684.252306,
+      10683313.682832,
+      13350773.406072,
+      15086843.352337
+    ],
+    "included_source_days_one_based": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "excluded_source_days": [
+      {
+        "day_one_based": 1,
+        "reason": "追踪起点状态快照：任务数仅为第2—8天均值的1.31%，且绝大多数第0小时记录为Waiting，不代表正常到达日。"
+      }
+    ],
+    "daily_audit": "data/processed/workload/workload_daily_audit.json"
+  },
+  "parameters": {
+    "days": 30,
+    "nominal_seed": 0,
+    "block_days": 2,
+    "flex_window_hours": 6,
+    "target_total_work_core_hours": 421287756.644638,
+    "flex_window_sensitivity_hours": [
+      2,
+      6,
+      12,
+      24
+    ],
+    "training_scenario_count": 0,
+    "training_seed": 1
+  },
+  "nominal_scenario": {
+    "scenario_id": 0,
+    "source_days_one_based": [
+      4,
+      5,
+      6,
+      7,
+      5,
+      6,
+      5,
+      6,
+      2,
+      3,
+      6,
+      7,
+      2,
+      3,
+      7,
+      8,
+      7,
+      8,
+      7,
+      8,
+      8,
+      2,
+      4,
+      5,
+      8,
+      2,
+      3,
+      4,
+      3,
+      4
+    ],
+    "normalization_scale": 0.999165717879,
+    "total_work_core_hours": 421287756.644639,
+    "sampling_rule": "平衡使用所有保留日的两日循环块；完整轮次后仅随机补足剩余块，再随机排列块顺序。"
+  },
+  "training_scenarios": [],
+  "outputs": {
+    "nominal_workload_30d.csv": "91e67548ddbf8b1a94e720b8ecf1f6e73584fa6868199ec3728584dd2d05ec5a"
+  }
+}

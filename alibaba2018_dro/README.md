@@ -21,7 +21,7 @@ batch_task（data/raw/workload）
   → analyze_workload / generate_workload
   → 聚合工作量场景 + 累计柔性包络 + 在线核数（data/processed/workload）
 
-窗口 CSV + 场景 0 累计柔性包络 + 在线核数 → inputs.HourlyInput → scheduler → 结果（data/results）
+窗口 CSV + 所有方法共用的 30 天名义累计柔性包络 + 在线核数 → inputs.HourlyInput → scheduler → 结果（data/results）
 ```
 
 当前实验入口是 `scripts/run_four_windows.py`，生成四窗口 × 碳预算强度的确定性主线基准结果。

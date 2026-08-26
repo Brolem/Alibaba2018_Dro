@@ -28,6 +28,7 @@
 
 - 现有主要输入：`batch_task.csv`、`container_meta.csv`、`machine_meta.csv`；`batch_instance.csv`、`container_usage.csv`、`machine_usage.csv` 不作为本阶段必需数据。
 - `batch_task` 的起止时间、计划 CPU 和任务规模只用于计算并聚合 core-hour 工作量；可延迟窗口与工作量分离，作为独立的反事实参数，不把观测完成时刻写成真实 SLA/deadline。
+- 逐日审计排除追踪起点异常的第 1 天；第 2—8 天用于构造一条确定性、SAA、RO、DRO 共用的 30 天名义负荷。训练场景池默认不生成，未来仅用于估计经验分布或不确定集。
 - 在线负载目前只能由 `container_meta` 的静态预留近似；不额外引入未经数据标定的在线负荷不确定性。
 
 ### 3.2 能源侧：ERCOT/EIA
@@ -131,5 +132,6 @@ c_{\mathrm{deg}}
 - [docs/design.md](docs/design.md)：实现边界、数据接口与待实现任务。
 - [docs/model.md](docs/model.md)：目标风光储模型、碳预算与联合不确定集。
 - [docs/forecasting.md](docs/forecasting.md)：无泄漏预测、实际回放和残差标定口径。
+- [docs/data_feasibility.md](docs/data_feasibility.md)：Alibaba v2018/GPU v2020 可行性、7日训练场景池与30天公共测试实例的边界。
 - [docs/results.md](docs/results.md)：现有 PV+BESS 开发原型结果档案。
 - [docs/paper_tables_figures.md](docs/paper_tables_figures.md)：主线完成后应产出的论文图表。

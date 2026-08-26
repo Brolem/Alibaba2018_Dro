@@ -4,10 +4,31 @@ import unittest
 
 import numpy as np
 
-from scripts.generate_workload import generate_scenarios
+from scripts.generate_workload import generate_nominal_scenario, generate_scenarios
 
 
 class WorkloadScenarioTests(unittest.TestCase):
+    def test_nominal_scenario_balances_retained_source_days(self) -> None:
+        daily = np.arange(1.0, 7.0 * 24.0 + 1.0).reshape(7, 24)
+
+        scenario, target_total = generate_nominal_scenario(
+            daily,
+            days=30,
+            seed=0,
+            block_days=2,
+            flex_window_hours=6,
+        )
+
+        counts = np.bincount(scenario.source_days, minlength=7)
+        self.assertEqual(len(scenario.arrival_work), 720)
+        self.assertEqual(sorted(counts.tolist()), [4, 4, 4, 4, 4, 5, 5])
+        self.assertAlmostEqual(float(scenario.arrival_work.sum()), target_total)
+        self.assertAlmostEqual(target_total, float(daily.mean(axis=0).sum()) * 30)
+        for first, second in zip(
+            scenario.source_days[0::2], scenario.source_days[1::2]
+        ):
+            self.assertEqual(second, (first + 1) % 7)
+
     def test_block_scenarios_conserve_work_and_build_valid_envelopes(self) -> None:
         daily = np.arange(1.0, 8.0 * 24.0 + 1.0).reshape(8, 24)
 
