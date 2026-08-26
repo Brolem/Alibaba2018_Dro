@@ -39,6 +39,8 @@ class HourlyInput:
     actual_erco_solar_generation_mwh: float = 0.0
     actual_erco_wind_generation_mwh: float = 0.0
     batch_capacity_mw: float | None = None
+    batch_cumulative_arrived_mwh: float | None = None
+    batch_cumulative_due_mwh: float | None = None
     effective_capacity_cores: float | None = None
     workload_scale: float = 1.0
 
@@ -81,12 +83,10 @@ def _effective_replay_scale(
     effective_capacity_cores = (
         PHYSICAL_CAPACITY_CORES * effective_capacity_fraction
     )
+    # 柔性窗口列是当前仍可调度的工作量，不是瞬时核需求；尺度闭合只使用
+    # “到达即执行”的逐小时基线平均核数，调度阶段另受 batch_capacity_mw 限制。
     raw_peak_cores = max(
-        online_cores
-        + max(
-            float(row["baseline_cores"] or 0.0),
-            float(row["flexible_window_energy_core_hours"] or 0.0),
-        )
+        online_cores + float(row["baseline_cores"] or 0.0)
         for row in envelope
     )
     if raw_peak_cores <= 0.0:
@@ -177,6 +177,20 @@ def build_hourly_input(
                     energy_row["erco_wind_generation_mwh"] or 0.0
                 ),
                 batch_capacity_mw=batch_capacity_mw,
+                batch_cumulative_arrived_mwh=(
+                    float(workload_row["cumulative_arrived_core_hours"] or 0.0)
+                    * workload_scale
+                    * power_per_core_mw
+                    if "cumulative_arrived_core_hours" in workload_row
+                    else None
+                ),
+                batch_cumulative_due_mwh=(
+                    float(workload_row["cumulative_due_core_hours"] or 0.0)
+                    * workload_scale
+                    * power_per_core_mw
+                    if "cumulative_due_core_hours" in workload_row
+                    else None
+                ),
                 effective_capacity_cores=effective_capacity_cores,
                 workload_scale=workload_scale,
             )

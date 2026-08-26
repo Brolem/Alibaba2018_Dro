@@ -284,6 +284,24 @@ def solve_wind_solar_storage(
         == sum(item.batch_baseline_mwh for item in inputs),
         name="batch_energy_conservation",
     )
+    has_cumulative_envelope = all(
+        item.batch_cumulative_arrived_mwh is not None
+        and item.batch_cumulative_due_mwh is not None
+        for item in inputs
+    )
+    if has_cumulative_envelope:
+        cumulative_batch = 0.0
+        for t in range(hours):
+            cumulative_batch += batch[t]
+            model.addCons(
+                cumulative_batch
+                <= float(inputs[t].batch_cumulative_arrived_mwh),
+                name=f"batch_arrival_envelope_{t}",
+            )
+            model.addCons(
+                cumulative_batch >= float(inputs[t].batch_cumulative_due_mwh),
+                name=f"batch_due_envelope_{t}",
+            )
     previous_grid = p_grid_initial_mw
     for t in range(hours):
         model.addCons(grid[t] - previous_grid <= r_max_mw, name=f"ramp_up_{t}")

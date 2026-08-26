@@ -3,6 +3,10 @@ from __future__ import annotations
 import unittest
 
 from alibaba2018_dro import scheduler
+from alibaba2018_dro.config import (
+    CARBON_BUDGET_REDUCTIONS,
+    DEFAULT_CARBON_BUDGET_REDUCTION,
+)
 from alibaba2018_dro.inputs import HourlyInput
 
 
@@ -18,6 +22,8 @@ def _input(
     forecast_wind: float = 0.0,
     actual_solar: float = 0.0,
     actual_wind: float = 0.0,
+    cumulative_arrived: float | None = None,
+    cumulative_due: float | None = None,
 ) -> HourlyInput:
     return HourlyInput(
         hour=hour,
@@ -33,11 +39,66 @@ def _input(
         batch_window_mwh=batch_window,
         actual_erco_solar_generation_mwh=actual_solar,
         actual_erco_wind_generation_mwh=actual_wind,
+        batch_cumulative_arrived_mwh=cumulative_arrived,
+        batch_cumulative_due_mwh=cumulative_due,
     )
+
+
+class MainlineConfigTests(unittest.TestCase):
+    def test_all_methods_share_declared_carbon_budget_set(self) -> None:
+        self.assertEqual(CARBON_BUDGET_REDUCTIONS, (0.000, 0.025, 0.050))
+        self.assertEqual(DEFAULT_CARBON_BUDGET_REDUCTION, 0.025)
 
 
 @unittest.skipIf(scheduler.Model is None, "PySCIPOpt is only available in scip_env")
 class MainlineSchedulerTests(unittest.TestCase):
+    def test_cumulative_envelope_prevents_early_and_late_batch_execution(self) -> None:
+        inputs = [
+            _input(
+                0,
+                price=100.0,
+                forecast_carbon=0.0,
+                batch_baseline=0.0,
+                batch_window=0.0,
+                cumulative_arrived=0.0,
+                cumulative_due=0.0,
+            ),
+            _input(
+                1,
+                price=50.0,
+                forecast_carbon=0.0,
+                batch_baseline=1.0,
+                batch_window=1.0,
+                cumulative_arrived=1.0,
+                cumulative_due=0.0,
+            ),
+            _input(
+                2,
+                price=10.0,
+                forecast_carbon=0.0,
+                batch_baseline=0.0,
+                batch_window=1.0,
+                cumulative_arrived=1.0,
+                cumulative_due=1.0,
+            ),
+        ]
+        result = scheduler.solve_wind_solar_storage(
+            inputs,
+            g_max_mw=2.0,
+            r_max_mw=2.0,
+            p_grid_initial_mw=0.0,
+            bess_power_mw=0.0,
+            bess_energy_mwh=0.0,
+            pv_capacity_mw=0.0,
+            wind_capacity_mw=0.0,
+            carbon_budget_reduction=0.0,
+        )
+
+        self.assertTrue(result.feasible)
+        self.assertAlmostEqual(result.batch[0], 0.0, places=6)
+        self.assertAlmostEqual(result.batch[1], 0.0, places=6)
+        self.assertAlmostEqual(result.batch[2], 1.0, places=6)
+
     def test_carbon_budget_moves_flexible_batch_to_low_carbon_hour(self) -> None:
         inputs = [
             _input(

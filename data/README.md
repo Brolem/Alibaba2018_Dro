@@ -18,7 +18,7 @@
 ## processed/（处理后/派生输入）
 
 - `energy/`：共享 2025 年度表 `ercot_2025_houston_hourly.csv`，以及四个 1062 小时无泄漏窗口与 `inputs_manifest.json`。
-- `workload/`：算力侧派生结果——`compute_uncertainty.json`、`hourly_flexibility_envelope.csv`、`generated_envelope_30d.csv`、`workload_stats.json`。
+- `workload/`：算力侧派生结果——`workload_stats.json`、`generated_envelope_30d.csv`、`compute_scenarios_30d.csv` 与 `compute_scenarios_manifest.json`。
 
 这些是调度器的直接输入，纳入版本控制以保证复现。
 

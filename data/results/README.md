@@ -4,7 +4,7 @@
 
 | 文件 | 生成脚本 | 内容 |
 | --- | --- | --- |
-| `four_windows_mainline_summary.csv` | `scripts/run_four_windows.py` | 四窗口、0/5/10% 碳预算收紧下的风光储日前调度与实际回放；含调度相关运行成本、BESS 吞吐衰减成本、预测/实际碳排和违约 |
+| `four_windows_mainline_summary.csv` | `scripts/run_four_windows.py` | 四窗口、所有方法共用的 0/2.5/5% 碳预算收紧下的风光储日前调度与实际回放；含调度相关运行成本、BESS 吞吐衰减成本、预测/实际碳排和违约 |
 | `four_windows_summary.csv` | 历史原型脚本（已清理） | 旧 PV+BESS 词典序原型档案，不用于主线比较 |
 | `baseline_comparison.csv` | 历史原型脚本（已清理） | 旧 Jan 不确定性对照档案，不用于主线比较 |
 | `baseline_backtest_four_windows.csv` | 历史原型脚本（已清理） | 旧 PV 回测档案，不用于主线比较 |

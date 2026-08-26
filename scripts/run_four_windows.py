@@ -92,7 +92,7 @@ def main() -> None:
                         "actual_ramp_violation_hours": None,
                     }
                 )
-                print(f"{window_start} eta={eta:.0%}: infeasible")
+                print(f"{window_start} eta={eta:.1%}: infeasible")
                 continue
             replay = replay_actual_wind_solar(
                 inputs,
@@ -135,7 +135,7 @@ def main() -> None:
                 }
             )
             print(
-                f"{window_start} eta={eta:.0%}: operating={plan.operating_cost:.2f}, "
+                f"{window_start} eta={eta:.1%}: operating={plan.operating_cost:.2f}, "
                 f"forecast_carbon={plan.forecast_carbon_kg:.2f}/"
                 f"{plan.carbon_budget_kg:.2f} kg, actual_carbon="
                 f"{replay.carbon_kg:.2f} kg, actual_violation="
