@@ -58,6 +58,8 @@ RUN_FIELDS = (
     "mip_gap",
     "decomposition_iterations",
     "active_scenario_count",
+    "carbon_cut_count",
+    "carbon_cut_violation_lower_bound",
     "nominal_grid_cost_usd",
     "nominal_bess_degradation_cost_usd",
     "nominal_operating_cost_usd",
@@ -278,9 +280,10 @@ def _run_config(
     replay_workers: int,
 ) -> dict[str, object]:
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "method": "SAA",
         "protocol": "2024_three_fold_12_pseudo_windows_v1",
+        "decomposition": "active_scenarios_with_scipy_highs_carbon_dual_cuts",
         "parameters": {
             "beta": 0.10,
             "wilson_confidence_one_sided": 0.95,
@@ -501,6 +504,8 @@ def main() -> None:
                         "mip_gap": result.mip_gap,
                         "decomposition_iterations": result.decomposition_iterations,
                         "active_scenario_count": result.active_scenario_count,
+                        "carbon_cut_count": result.carbon_cut_count,
+                        "carbon_cut_violation_lower_bound": result.carbon_cut_violation_lower_bound,
                         "nominal_grid_cost_usd": result.plan.grid_cost,
                         "nominal_bess_degradation_cost_usd": result.plan.bess_degradation_cost,
                         "nominal_operating_cost_usd": result.plan.operating_cost,
@@ -528,6 +533,8 @@ def main() -> None:
                         "mip_gap": result.mip_gap,
                         "decomposition_iterations": result.decomposition_iterations,
                         "active_scenario_count": result.active_scenario_count,
+                        "carbon_cut_count": result.carbon_cut_count,
+                        "carbon_cut_violation_lower_bound": result.carbon_cut_violation_lower_bound,
                         "nominal_grid_cost_usd": "",
                         "nominal_bess_degradation_cost_usd": "",
                         "nominal_operating_cost_usd": "",

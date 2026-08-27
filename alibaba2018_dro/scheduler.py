@@ -23,6 +23,11 @@ try:  # PySCIPOpt 只在 scip_env 里；其它环境仍可导入数据工具。
 except ImportError:  # pragma: no cover
     Model = None
 
+try:  # 碳排放 LP 对偶割使用 HiGHS 的稳定 marginal 接口。
+    from scipy.optimize import linprog
+except ImportError:  # pragma: no cover
+    linprog = None
+
 
 LBS_PER_KG = 0.45359237
 
@@ -79,6 +84,8 @@ class SaaDayAheadResult:
     mean_batch_adjustment_mwh: float = 0.0
     decomposition_iterations: int = 0
     active_scenario_count: int = 0
+    carbon_cut_count: int = 0
+    carbon_cut_violation_lower_bound: int | None = None
     solver_status: str = "unknown"
     runtime_seconds: float = 0.0
     mip_gap: float = math.inf
@@ -103,6 +110,27 @@ class ScenarioReplayResult:
     carbon_violation: bool
     grid_limit_violation: bool
     ramp_violation: bool
+
+
+@dataclass(frozen=True)
+class CarbonBendersCut:
+    """场景最小碳排放值函数在一个日前计划处的支撑切平面。"""
+
+    scenario_index: int
+    intercept_kg: float
+    charge_gradient_kg_per_mw: tuple[float, ...]
+    discharge_gradient_kg_per_mw: tuple[float, ...]
+    big_m_kg: float
+
+
+@dataclass(frozen=True)
+class CarbonSubproblemResult:
+    """固定日前 BESS 后的场景最小碳 LP 结果及其次梯度。"""
+
+    feasible: bool
+    minimum_carbon_kg: float
+    cut: CarbonBendersCut | None
+    solver_status: str
 
 
 def _infeasible_day_ahead_result() -> DayAheadResult:
@@ -429,6 +457,9 @@ def solve_saa_wind_solar_storage(
     time_limit_seconds: float | None = None,
     chance_sample_size: int | None = None,
     initial_plan: DayAheadResult | None = None,
+    scenario_indices: Sequence[int] | None = None,
+    carbon_cuts: Sequence[CarbonBendersCut] = (),
+    minimize_carbon_violations: bool = False,
 ) -> SaaDayAheadResult:
     """求解带有限批处理追索的四通道等概率 SAA 机会约束。
 
@@ -445,6 +476,12 @@ def solve_saa_wind_solar_storage(
         raise ValueError("scenarios must not be empty")
     if chance_sample_size is not None and chance_sample_size < len(scenarios):
         raise ValueError("chance_sample_size must cover every active scenario")
+    if scenario_indices is None:
+        scenario_indices = tuple(range(len(scenarios)))
+    if len(scenario_indices) != len(scenarios):
+        raise ValueError("scenario_indices must match the active scenarios")
+    if len(set(scenario_indices)) != len(scenario_indices):
+        raise ValueError("scenario_indices must be unique")
     if initial_plan is not None and len(initial_plan.batch) != len(inputs):
         raise ValueError("initial_plan must match the input horizon")
     if min(g_max_mw, r_max_mw, bess_power_mw, bess_energy_mwh) < 0.0:
@@ -622,7 +659,14 @@ def solve_saa_wind_solar_storage(
     violation_carbon: dict[int, object] = {}
     violation_grid: dict[int, object] = {}
     violation_ramp: dict[int, object] = {}
-    for scenario_index, scenario in enumerate(scenarios):
+    def carbon_violation_var(scenario_index: int) -> object:
+        if scenario_index not in violation_carbon:
+            violation_carbon[scenario_index] = model.addVar(
+                vtype="B", name=f"violate_carbon_{scenario_index}"
+            )
+        return violation_carbon[scenario_index]
+
+    for scenario_index, scenario in zip(scenario_indices, scenarios):
         solar = _local_resource_profile(
             [
                 inputs[t].forecast_erco_solar_generation_mwh
@@ -654,9 +698,7 @@ def solve_saa_wind_solar_storage(
         violation_workload[scenario_index] = model.addVar(
             vtype="B", name=f"violate_workload_{scenario_index}"
         )
-        violation_carbon[scenario_index] = model.addVar(
-            vtype="B", name=f"violate_carbon_{scenario_index}"
-        )
+        carbon_violation_var(scenario_index)
         violation_grid[scenario_index] = model.addVar(
             vtype="B", name=f"violate_grid_{scenario_index}"
         )
@@ -756,6 +798,23 @@ def solve_saa_wind_solar_storage(
             name=f"saa_carbon_{scenario_index}",
         )
 
+    for cut_index, cut in enumerate(carbon_cuts):
+        if len(cut.charge_gradient_kg_per_mw) != hours or len(
+            cut.discharge_gradient_kg_per_mw
+        ) != hours:
+            raise ValueError("every carbon cut must match the input horizon")
+        violation = carbon_violation_var(cut.scenario_index)
+        model.addCons(
+            cut.intercept_kg
+            + sum(
+                cut.charge_gradient_kg_per_mw[t] * p_ch[t]
+                + cut.discharge_gradient_kg_per_mw[t] * p_dis[t]
+                for t in range(hours)
+            )
+            <= carbon_budget_kg + cut.big_m_kg * violation,
+            name=f"carbon_benders_{cut.scenario_index}_{cut_index}",
+        )
+
     scenario_count = len(scenarios)
     chance_denominator = (
         chance_sample_size if chance_sample_size is not None else scenario_count
@@ -764,10 +823,11 @@ def solve_saa_wind_solar_storage(
         sum(violation_workload.values()) <= beta_workload * chance_denominator,
         name="saa_workload_chance",
     )
-    model.addCons(
-        sum(violation_carbon.values()) <= beta_carbon * chance_denominator,
-        name="saa_carbon_chance",
-    )
+    if not minimize_carbon_violations:
+        model.addCons(
+            sum(violation_carbon.values()) <= beta_carbon * chance_denominator,
+            name="saa_carbon_chance",
+        )
     model.addCons(
         sum(violation_grid.values()) <= beta_grid * chance_denominator,
         name="saa_grid_chance",
@@ -776,7 +836,10 @@ def solve_saa_wind_solar_storage(
         sum(violation_ramp.values()) <= beta_ramp * chance_denominator,
         name="saa_ramp_chance",
     )
-    model.setObjective(primary_objective, "minimize")
+    if minimize_carbon_violations:
+        model.setObjective(sum(violation_carbon.values()), "minimize")
+    else:
+        model.setObjective(primary_objective, "minimize")
     if initial_plan is not None:
         warm_start = model.createPartialSol()
         for t in range(hours):
@@ -790,6 +853,7 @@ def solve_saa_wind_solar_storage(
                 initial_plan.curtailment[t],
             )
         model.addSol(warm_start)
+    minimum_carbon_violation_count: int | None = None
     model.optimize()
     if model.getStatus() != "optimal":
         solver_status = str(model.getStatus())
@@ -803,7 +867,34 @@ def solve_saa_wind_solar_storage(
             solver_status=solver_status,
             runtime_seconds=model.getSolvingTime(),
             mip_gap=model.getGap(),
+            carbon_cut_count=len(carbon_cuts),
         )
+    if minimize_carbon_violations:
+        minimum_carbon_violation_count = int(round(model.getObjVal()))
+        model.freeTransform()
+        model.addCons(
+            sum(violation_carbon.values()) == minimum_carbon_violation_count,
+            name="fix_minimum_carbon_violations",
+        )
+        model.setObjective(primary_objective, "minimize")
+        model.optimize()
+        if model.getStatus() != "optimal":
+            solver_status = str(model.getStatus())
+            return SaaDayAheadResult(
+                plan=_infeasible_day_ahead_result(),
+                scenario_count=scenario_count,
+                workload_violation_rate=0.0,
+                carbon_violation_rate=0.0,
+                grid_limit_violation_rate=0.0,
+                ramp_violation_rate=0.0,
+                solver_status=solver_status,
+                runtime_seconds=model.getSolvingTime(),
+                mip_gap=model.getGap(),
+                carbon_cut_count=len(carbon_cuts),
+                carbon_cut_violation_lower_bound=(
+                    minimum_carbon_violation_count
+                ),
+            )
 
     # 主问题只负责选择日前动作并验证“存在可行场景追索”。主问题最优后，
     # 将每个训练场景拆成独立连续回放，避免为不影响日前目标的词典序整理
@@ -894,6 +985,8 @@ def solve_saa_wind_solar_storage(
         solver_status=str(model.getStatus()),
         runtime_seconds=model.getSolvingTime(),
         mip_gap=model.getGap(),
+        carbon_cut_count=len(carbon_cuts),
+        carbon_cut_violation_lower_bound=minimum_carbon_violation_count,
     )
 
 
@@ -1240,6 +1333,177 @@ def replay_joint_scenario_with_batch_recourse(
     )
 
 
+def solve_carbon_recourse_subproblem(
+    inputs: list[HourlyInput],
+    plan: DayAheadResult,
+    scenario: ScenarioRealization,
+    *,
+    scenario_index: int,
+    pv_capacity_mw: float,
+    wind_capacity_mw: float,
+    g_max_mw: float,
+    r_max_mw: float,
+    p_grid_initial_mw: float,
+    bess_power_mw: float,
+    solar_reference_mwh: float = SOLAR_REFERENCE_MWH,
+    wind_reference_mwh: float = WIND_REFERENCE_MWH,
+) -> CarbonSubproblemResult:
+    """求固定 BESS 场景最小碳排放，并返回关于日前充放电的对偶割。"""
+
+    if linprog is None:
+        raise RuntimeError("scipy is required for carbon recourse dual cuts")
+    if not plan.feasible or len(plan.batch) != len(inputs):
+        raise ValueError("plan must be feasible and match the input horizon")
+    hours = len(inputs)
+    conversion_values = {item.workload_mwh_per_core_hour for item in inputs}
+    if len(conversion_values) != 1 or next(iter(conversion_values)) <= 0.0:
+        raise ValueError("inputs must carry one positive workload conversion")
+    workload_conversion = next(iter(conversion_values))
+    pv = _local_resource_profile(
+        [
+            inputs[t].forecast_erco_solar_generation_mwh
+            + scenario.residual_solar_mwh[t]
+            for t in range(hours)
+        ],
+        capacity_mw=pv_capacity_mw,
+        reference_mwh=solar_reference_mwh,
+        label="scenario_pv",
+    )
+    wind = _local_resource_profile(
+        [
+            inputs[t].forecast_erco_wind_generation_mwh
+            + scenario.residual_wind_mwh[t]
+            for t in range(hours)
+        ],
+        capacity_mw=wind_capacity_mw,
+        reference_mwh=wind_reference_mwh,
+        label="scenario_wind",
+    )
+    carbon = [
+        max(
+            0.0,
+            inputs[t].forecast_consumed_co2_lbs_per_kwh
+            + scenario.residual_carbon_lbs_per_kwh[t],
+        )
+        for t in range(hours)
+    ]
+    fallback_capacity_mw = max(item.batch_window_mwh for item in inputs)
+    capacity_mw = [
+        item.batch_capacity_mw
+        if item.batch_capacity_mw is not None
+        else fallback_capacity_mw
+        for item in inputs
+    ]
+    # 变量块依次为 batch、grid、curtailment；显式矩阵便于稳定读取 LP 对偶值。
+    variable_count = 3 * hours
+    batch_index = lambda t: t
+    grid_index = lambda t: hours + t
+    curtailment_index = lambda t: 2 * hours + t
+    objective = [0.0] * variable_count
+    bounds: list[tuple[float, float]] = []
+    bounds.extend((0.0, capacity_mw[t]) for t in range(hours))
+    bounds.extend((0.0, g_max_mw) for _ in range(hours))
+    bounds.extend((0.0, pv[t] + wind[t]) for t in range(hours))
+    for t in range(hours):
+        objective[grid_index(t)] = carbon[t] * 1000.0 * LBS_PER_KG
+
+    a_ub: list[list[float]] = []
+    b_ub: list[float] = []
+    for t in range(hours):
+        arrived_row = [0.0] * variable_count
+        due_row = [0.0] * variable_count
+        for tau in range(t + 1):
+            arrived_row[batch_index(tau)] = 1.0
+            due_row[batch_index(tau)] = -1.0
+        a_ub.append(arrived_row)
+        b_ub.append(
+            scenario.cumulative_arrived_core_hours[t] * workload_conversion
+        )
+        a_ub.append(due_row)
+        b_ub.append(-scenario.cumulative_due_core_hours[t] * workload_conversion)
+
+    for t in range(hours):
+        ramp_up = [0.0] * variable_count
+        ramp_down = [0.0] * variable_count
+        ramp_up[grid_index(t)] = 1.0
+        ramp_down[grid_index(t)] = -1.0
+        if t == 0:
+            ramp_up_rhs = r_max_mw + p_grid_initial_mw
+            ramp_down_rhs = r_max_mw - p_grid_initial_mw
+        else:
+            ramp_up[grid_index(t - 1)] = -1.0
+            ramp_down[grid_index(t - 1)] = 1.0
+            ramp_up_rhs = r_max_mw
+            ramp_down_rhs = r_max_mw
+        a_ub.extend((ramp_up, ramp_down))
+        b_ub.extend((ramp_up_rhs, ramp_down_rhs))
+
+    p_must = inputs[0].online_mw + inputs[0].base_mw
+    a_eq: list[list[float]] = []
+    b_eq: list[float] = []
+    for t in range(hours):
+        balance_row = [0.0] * variable_count
+        balance_row[grid_index(t)] = 1.0
+        balance_row[batch_index(t)] = -1.0
+        balance_row[curtailment_index(t)] = -1.0
+        a_eq.append(balance_row)
+        b_eq.append(
+            p_must
+            + plan.bess_charge[t]
+            - plan.bess_discharge[t]
+            - pv[t]
+            - wind[t]
+        )
+    batch_total_row = [0.0] * variable_count
+    for t in range(hours):
+        batch_total_row[batch_index(t)] = 1.0
+    a_eq.append(batch_total_row)
+    b_eq.append(sum(plan.batch))
+
+    result = linprog(
+        objective,
+        A_ub=a_ub,
+        b_ub=b_ub,
+        A_eq=a_eq,
+        b_eq=b_eq,
+        bounds=bounds,
+        method="highs",
+    )
+    status = "optimal" if result.success else f"linprog_status_{result.status}"
+    if not result.success:
+        return CarbonSubproblemResult(
+            feasible=False,
+            minimum_carbon_kg=math.inf,
+            cut=None,
+            solver_status=f"{status}: {result.message}",
+        )
+    minimum_carbon_kg = float(result.fun)
+    balance_duals = [float(value) for value in result.eqlin.marginals[:hours]]
+    charge_gradient = tuple(balance_duals)
+    discharge_gradient = tuple(-value for value in balance_duals)
+    intercept = minimum_carbon_kg - sum(
+        charge_gradient[t] * plan.bess_charge[t]
+        + discharge_gradient[t] * plan.bess_discharge[t]
+        for t in range(hours)
+    )
+    maximum_cut_value_kg = intercept + bess_power_mw * sum(
+        max(0.0, charge_gradient[t], discharge_gradient[t])
+        for t in range(hours)
+    )
+    return CarbonSubproblemResult(
+        feasible=True,
+        minimum_carbon_kg=minimum_carbon_kg,
+        cut=CarbonBendersCut(
+            scenario_index=scenario_index,
+            intercept_kg=intercept,
+            charge_gradient_kg_per_mw=charge_gradient,
+            discharge_gradient_kg_per_mw=discharge_gradient,
+            big_m_kg=max(0.0, maximum_cut_value_kg - plan.carbon_budget_kg),
+        ),
+        solver_status=status,
+    )
+
+
 def solve_decomposed_saa_wind_solar_storage(
     inputs: list[HourlyInput],
     scenarios: Sequence[ScenarioRealization],
@@ -1294,6 +1558,8 @@ def solve_decomposed_saa_wind_solar_storage(
     last_result: SaaDayAheadResult | None = None
     previous_plan: DayAheadResult | None = None
     last_rates = {name: 1.0 for name in allowed}
+    carbon_cuts: list[CarbonBendersCut] = []
+    carbon_cut_violation_lower_bound: int | None = None
 
     for iteration in range(1, max_iterations + 1):
         ordered_active = sorted(active_indices)
@@ -1332,6 +1598,8 @@ def solve_decomposed_saa_wind_solar_storage(
             time_limit_seconds=time_limit_seconds,
             chance_sample_size=total_scenarios,
             initial_plan=previous_plan,
+            scenario_indices=ordered_active,
+            carbon_cuts=carbon_cuts,
         )
         last_result = master_result
         if display_progress:
@@ -1349,6 +1617,8 @@ def solve_decomposed_saa_wind_solar_storage(
                 runtime_seconds=time.perf_counter() - started,
                 decomposition_iterations=iteration,
                 active_scenario_count=len(active_indices),
+                carbon_cut_count=len(carbon_cuts),
+                carbon_cut_violation_lower_bound=carbon_cut_violation_lower_bound,
             )
         previous_plan = master_result.plan
 
@@ -1415,10 +1685,49 @@ def solve_decomposed_saa_wind_solar_storage(
                 runtime_seconds=time.perf_counter() - started,
                 decomposition_iterations=iteration,
                 active_scenario_count=len(active_indices),
+                carbon_cut_count=len(carbon_cuts),
+                carbon_cut_violation_lower_bound=carbon_cut_violation_lower_bound,
             )
 
+        cuts_added = 0
+        if len(violations["carbon"]) > allowed["carbon"]:
+            for scenario_index in violations["carbon"]:
+                subproblem = solve_carbon_recourse_subproblem(
+                    inputs,
+                    master_result.plan,
+                    scenarios[scenario_index],
+                    scenario_index=scenario_index,
+                    pv_capacity_mw=pv_capacity_mw,
+                    wind_capacity_mw=wind_capacity_mw,
+                    g_max_mw=g_max_mw,
+                    r_max_mw=r_max_mw,
+                    p_grid_initial_mw=p_grid_initial_mw,
+                    bess_power_mw=bess_power_mw,
+                    solar_reference_mwh=solar_reference_mwh,
+                    wind_reference_mwh=wind_reference_mwh,
+                )
+                if subproblem.cut is not None:
+                    carbon_cuts.append(subproblem.cut)
+                    cuts_added += 1
+            if display_progress:
+                details = []
+                if cuts_added:
+                    new_cuts = carbon_cuts[-cuts_added:]
+                    details = [
+                        f"big_m_min={min(cut.big_m_kg for cut in new_cuts):.3f}",
+                        f"big_m_max={max(cut.big_m_kg for cut in new_cuts):.3f}",
+                    ]
+                print(
+                    "decomposition_carbon_cuts:",
+                    f"iteration={iteration}",
+                    f"added={cuts_added}",
+                    f"total={len(carbon_cuts)}",
+                    *details,
+                    flush=True,
+                )
+
         additions: set[int] = set()
-        for name in ("workload", "carbon", "grid", "ramp"):
+        for name in ("workload", "grid", "ramp"):
             if len(violations[name]) <= allowed[name]:
                 continue
             inactive = [
@@ -1426,7 +1735,7 @@ def solve_decomposed_saa_wind_solar_storage(
             ]
             if inactive:
                 additions.add(inactive[0])
-        if not additions:
+        if not additions and cuts_added == 0:
             return SaaDayAheadResult(
                 plan=_infeasible_day_ahead_result(),
                 scenario_count=total_scenarios,
@@ -1438,55 +1747,173 @@ def solve_decomposed_saa_wind_solar_storage(
                 runtime_seconds=time.perf_counter() - started,
                 decomposition_iterations=iteration,
                 active_scenario_count=len(active_indices),
+                carbon_cut_count=len(carbon_cuts),
+                carbon_cut_violation_lower_bound=carbon_cut_violation_lower_bound,
             )
         active_indices.update(additions)
         if display_progress:
             print(
                 "decomposition_add:",
                 f"iteration={iteration}",
-                f"added={','.join(str(index) for index in sorted(additions))}",
+                f"added={','.join(str(index) for index in sorted(additions)) or 'none'}",
                 flush=True,
             )
         if iteration == max_iterations:
             continue
-        restoration_scenarios = [scenarios[index] for index in sorted(additions)]
-        restoration = solve_saa_wind_solar_storage(
-            inputs,
-            restoration_scenarios,
-            g_max_mw=g_max_mw,
-            r_max_mw=r_max_mw,
-            p_grid_initial_mw=p_grid_initial_mw,
-            bess_power_mw=bess_power_mw,
-            bess_energy_mwh=bess_energy_mwh,
-            pv_capacity_mw=pv_capacity_mw,
-            wind_capacity_mw=wind_capacity_mw,
-            carbon_budget_reduction=carbon_budget_reduction,
-            beta_workload=0.0,
-            beta_carbon=0.0,
-            beta_grid=0.0,
-            beta_ramp=0.0,
-            solar_reference_mwh=solar_reference_mwh,
-            wind_reference_mwh=wind_reference_mwh,
-            bess_efficiency=bess_efficiency,
-            soc_min=soc_min,
-            soc_max=soc_max,
-            soc_initial=soc_initial,
-            bess_degradation_cost_usd_per_mwh_throughput=(
-                bess_degradation_cost_usd_per_mwh_throughput
-            ),
-            time_limit_seconds=time_limit_seconds,
-            initial_plan=previous_plan,
-        )
-        if restoration.feasible:
-            previous_plan = restoration.plan
-        if display_progress:
-            print(
-                "decomposition_restore:",
-                f"iteration={iteration}",
-                f"status={restoration.solver_status}",
-                f"runtime={restoration.runtime_seconds:.3f}s",
-                flush=True,
+        if additions:
+            restoration_indices = sorted(additions)
+            restoration_scenarios = [
+                scenarios[index] for index in restoration_indices
+            ]
+            restoration = solve_saa_wind_solar_storage(
+                inputs,
+                restoration_scenarios,
+                g_max_mw=g_max_mw,
+                r_max_mw=r_max_mw,
+                p_grid_initial_mw=p_grid_initial_mw,
+                bess_power_mw=bess_power_mw,
+                bess_energy_mwh=bess_energy_mwh,
+                pv_capacity_mw=pv_capacity_mw,
+                wind_capacity_mw=wind_capacity_mw,
+                carbon_budget_reduction=carbon_budget_reduction,
+                beta_workload=0.0,
+                beta_carbon=0.0,
+                beta_grid=0.0,
+                beta_ramp=0.0,
+                solar_reference_mwh=solar_reference_mwh,
+                wind_reference_mwh=wind_reference_mwh,
+                bess_efficiency=bess_efficiency,
+                soc_min=soc_min,
+                soc_max=soc_max,
+                soc_initial=soc_initial,
+                bess_degradation_cost_usd_per_mwh_throughput=(
+                    bess_degradation_cost_usd_per_mwh_throughput
+                ),
+                time_limit_seconds=time_limit_seconds,
+                initial_plan=previous_plan,
+                scenario_indices=restoration_indices,
             )
+            if restoration.feasible:
+                previous_plan = restoration.plan
+            if display_progress:
+                print(
+                    "decomposition_restore:",
+                    f"iteration={iteration}",
+                    f"status={restoration.solver_status}",
+                    f"runtime={restoration.runtime_seconds:.3f}s",
+                    flush=True,
+                )
+
+        if cuts_added:
+            restoration_index = ordered_active[0]
+            cut_restoration = solve_saa_wind_solar_storage(
+                inputs,
+                [scenarios[restoration_index]],
+                g_max_mw=g_max_mw,
+                r_max_mw=r_max_mw,
+                p_grid_initial_mw=p_grid_initial_mw,
+                bess_power_mw=bess_power_mw,
+                bess_energy_mwh=bess_energy_mwh,
+                pv_capacity_mw=pv_capacity_mw,
+                wind_capacity_mw=wind_capacity_mw,
+                carbon_budget_reduction=carbon_budget_reduction,
+                beta_workload=beta_workload,
+                beta_carbon=beta_carbon,
+                beta_grid=beta_grid,
+                beta_ramp=beta_ramp,
+                solar_reference_mwh=solar_reference_mwh,
+                wind_reference_mwh=wind_reference_mwh,
+                bess_efficiency=bess_efficiency,
+                soc_min=soc_min,
+                soc_max=soc_max,
+                soc_initial=soc_initial,
+                bess_degradation_cost_usd_per_mwh_throughput=(
+                    bess_degradation_cost_usd_per_mwh_throughput
+                ),
+                time_limit_seconds=time_limit_seconds,
+                chance_sample_size=total_scenarios,
+                initial_plan=previous_plan,
+                scenario_indices=[restoration_index],
+                carbon_cuts=carbon_cuts,
+            )
+            if cut_restoration.feasible:
+                previous_plan = cut_restoration.plan
+            if display_progress:
+                print(
+                    "decomposition_cut_restore:",
+                    f"iteration={iteration}",
+                    f"status={cut_restoration.solver_status}",
+                    f"runtime={cut_restoration.runtime_seconds:.3f}s",
+                    flush=True,
+                )
+            if not cut_restoration.feasible:
+                cut_diagnostic = solve_saa_wind_solar_storage(
+                    inputs,
+                    [scenarios[restoration_index]],
+                    g_max_mw=g_max_mw,
+                    r_max_mw=r_max_mw,
+                    p_grid_initial_mw=p_grid_initial_mw,
+                    bess_power_mw=bess_power_mw,
+                    bess_energy_mwh=bess_energy_mwh,
+                    pv_capacity_mw=pv_capacity_mw,
+                    wind_capacity_mw=wind_capacity_mw,
+                    carbon_budget_reduction=carbon_budget_reduction,
+                    beta_workload=beta_workload,
+                    beta_carbon=1.0,
+                    beta_grid=beta_grid,
+                    beta_ramp=beta_ramp,
+                    solar_reference_mwh=solar_reference_mwh,
+                    wind_reference_mwh=wind_reference_mwh,
+                    bess_efficiency=bess_efficiency,
+                    soc_min=soc_min,
+                    soc_max=soc_max,
+                    soc_initial=soc_initial,
+                    bess_degradation_cost_usd_per_mwh_throughput=(
+                        bess_degradation_cost_usd_per_mwh_throughput
+                    ),
+                    time_limit_seconds=time_limit_seconds,
+                    chance_sample_size=total_scenarios,
+                    initial_plan=previous_plan,
+                    scenario_indices=[restoration_index],
+                    carbon_cuts=carbon_cuts,
+                    minimize_carbon_violations=True,
+                )
+                carbon_cut_violation_lower_bound = (
+                    cut_diagnostic.carbon_cut_violation_lower_bound
+                )
+                if display_progress:
+                    print(
+                        "decomposition_cut_diagnostic:",
+                        f"iteration={iteration}",
+                        f"status={cut_diagnostic.solver_status}",
+                        "minimum_violations="
+                        f"{carbon_cut_violation_lower_bound}",
+                        f"runtime={cut_diagnostic.runtime_seconds:.3f}s",
+                        flush=True,
+                    )
+                if (
+                    carbon_cut_violation_lower_bound is not None
+                    and carbon_cut_violation_lower_bound > allowed["carbon"]
+                ):
+                    return SaaDayAheadResult(
+                        plan=_infeasible_day_ahead_result(),
+                        scenario_count=total_scenarios,
+                        workload_violation_rate=last_rates["workload"],
+                        carbon_violation_rate=last_rates["carbon"],
+                        grid_limit_violation_rate=last_rates["grid"],
+                        ramp_violation_rate=last_rates["ramp"],
+                        solver_status=(
+                            "carbon_chance_infeasible_by_cut_lower_bound"
+                        ),
+                        runtime_seconds=time.perf_counter() - started,
+                        mip_gap=0.0,
+                        decomposition_iterations=iteration,
+                        active_scenario_count=len(active_indices),
+                        carbon_cut_count=len(carbon_cuts),
+                        carbon_cut_violation_lower_bound=(
+                            carbon_cut_violation_lower_bound
+                        ),
+                    )
 
     assert last_result is not None
     return SaaDayAheadResult(
@@ -1501,6 +1928,8 @@ def solve_decomposed_saa_wind_solar_storage(
         mip_gap=last_result.mip_gap,
         decomposition_iterations=max_iterations,
         active_scenario_count=len(active_indices),
+        carbon_cut_count=len(carbon_cuts),
+        carbon_cut_violation_lower_bound=carbon_cut_violation_lower_bound,
     )
 
 

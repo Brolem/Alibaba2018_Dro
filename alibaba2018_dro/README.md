@@ -9,7 +9,9 @@
 | `eia_history.py` | 读 EIA-930 XLSX、ERCOT DAM 价（标准库） |
 | `forecasting.py` | 48h 保护的 Ridge 预测器（numpy） |
 | `energy.py` | 构造 1062h 论文窗口输入与清单 |
-| `scheduler.py` | 主线日前 MILP：风光+BESS+有效容量+预测碳预算，以及实际风光碳回放 |
+| `residuals.py` | 生成风光碳联合残差、可用日块和季节平衡折 |
+| `scenarios.py` | 从 manifest 重建 SAA 训练、验证和回放场景 |
+| `scheduler.py` | 确定性/SAA 日前模型、有限批处理追索、碳对偶割和实际回放 |
 
 数据流：
 
@@ -28,5 +30,5 @@ batch_task（data/raw/workload）
 
 运行环境：
 
-- `scheduler.py` 需 `scip_env`（PySCIPOpt）；
+- `scheduler.py` 需 `scip_env`（PySCIPOpt）；碳对偶割还需 SciPy/HiGHS；
 - 其余模块 numpy / 标准库即可。

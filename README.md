@@ -2,7 +2,7 @@
 
 > **研究设计 v2（已确认）**：研究**轨迹驱动的柔性算力可调度域不确定性**与联合能源侧不确定性下，风电、光伏、储能和柔性批处理负载的日前协同调度。碳强度被定位为剩余购电的消费侧环境属性，以碳预算约束和事后实际排放评价呈现。
 >
-> **实现状态（必须区分）**：`scripts/run_four_windows.py` 已实现主线的确定性日前 MILP：预测风光、BESS、有效回放容量和预测碳预算；随后以实际风光和实际碳强度做固定计划回放。联合风光碳残差、SAA、静态 Γ-RO 和所提 DRO 尚未迁移到该主线，故当前结果是主线的确定性基准，不能作为不确定性方法的最终比较结论。
+> **实现状态（必须区分）**：确定性日前 MILP 与实际回放已完成；联合风光碳残差、2024 校准日块、SAA manifest、有限批处理追索、活动场景分解和碳 LP 对偶割已接入主线。`fold_1 / N=20 / 1 window` 预检证明当前 2.5% 碳预算收紧与 90% 碳可靠性组合至少需要 `6/20` 个碳违约场景，超过允许的 `2/20`，故完整 SAA 校准暂停。静态 Γ-RO 和所提 TV-DRO 尚未实现，当前证据不能作为不确定性方法的最终比较结论。
 
 ## 1. 研究问题与边界
 
@@ -134,7 +134,9 @@ c_{\mathrm{deg}}
 
 ## 8. 文档索引
 
+- [docs/README.md](docs/README.md)：项目文件导航、文档分工与文件管理规则。
 - [docs/design.md](docs/design.md)：实现边界、数据接口与待实现任务。
+- [docs/implementation_log.md](docs/implementation_log.md)：逐次实现、执行命令、失败原因与验证证据。
 - [docs/model.md](docs/model.md)：目标风光储模型、碳预算与联合不确定集。
 - [docs/forecasting.md](docs/forecasting.md)：无泄漏预测、实际回放和残差标定口径。
 - [docs/data_feasibility.md](docs/data_feasibility.md)：Alibaba v2018/GPU v2020 可行性、7日训练场景池与30天公共测试实例的边界。

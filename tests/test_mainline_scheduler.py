@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 
 from alibaba2018_dro import scheduler
 from alibaba2018_dro.config import (
@@ -60,7 +61,7 @@ class MainlineSchedulerTests(unittest.TestCase):
             _input(
                 0,
                 price=1.0,
-                forecast_carbon=0.0,
+                forecast_carbon=1.0,
                 batch_baseline=1.0,
                 batch_window=1.0,
                 workload_mwh_per_core_hour=1.0,
@@ -68,7 +69,7 @@ class MainlineSchedulerTests(unittest.TestCase):
             _input(
                 1,
                 price=10.0,
-                forecast_carbon=0.0,
+                forecast_carbon=1.0,
                 batch_baseline=0.0,
                 batch_window=1.0,
                 workload_mwh_per_core_hour=1.0,
@@ -148,6 +149,97 @@ class MainlineSchedulerTests(unittest.TestCase):
         self.assertEqual(decomposed.decomposition_iterations, 1)
         self.assertEqual(decomposed.active_scenario_count, 1)
         self.assertEqual(decomposed.scenario_count, 1)
+
+        carbon_lp = scheduler.solve_carbon_recourse_subproblem(
+            inputs,
+            result.plan,
+            scenario,
+            scenario_index=0,
+            pv_capacity_mw=0.0,
+            wind_capacity_mw=0.0,
+            g_max_mw=2.0,
+            r_max_mw=2.0,
+            p_grid_initial_mw=0.0,
+            bess_power_mw=1.0,
+        )
+        self.assertTrue(carbon_lp.feasible)
+        self.assertIsNotNone(carbon_lp.cut)
+        perturbed_plan = replace(
+            result.plan,
+            bess_charge=[0.01, 0.0],
+        )
+        perturbed_lp = scheduler.solve_carbon_recourse_subproblem(
+            inputs,
+            perturbed_plan,
+            scenario,
+            scenario_index=0,
+            pv_capacity_mw=0.0,
+            wind_capacity_mw=0.0,
+            g_max_mw=2.0,
+            r_max_mw=2.0,
+            p_grid_initial_mw=0.0,
+            bess_power_mw=1.0,
+        )
+        assert carbon_lp.cut is not None
+        predicted = carbon_lp.cut.intercept_kg + sum(
+            carbon_lp.cut.charge_gradient_kg_per_mw[t]
+            * perturbed_plan.bess_charge[t]
+            + carbon_lp.cut.discharge_gradient_kg_per_mw[t]
+            * perturbed_plan.bess_discharge[t]
+            for t in range(2)
+        )
+        self.assertLessEqual(predicted, perturbed_lp.minimum_carbon_kg + 1e-6)
+        self.assertAlmostEqual(predicted, perturbed_lp.minimum_carbon_kg, places=5)
+
+        impossible_cut = scheduler.CarbonBendersCut(
+            scenario_index=7,
+            intercept_kg=result.plan.carbon_budget_kg + 1.0,
+            charge_gradient_kg_per_mw=(0.0, 0.0),
+            discharge_gradient_kg_per_mw=(0.0, 0.0),
+            big_m_kg=100.0,
+        )
+        cut_master = scheduler.solve_saa_wind_solar_storage(
+            inputs,
+            [scenario],
+            g_max_mw=2.0,
+            r_max_mw=2.0,
+            p_grid_initial_mw=0.0,
+            bess_power_mw=0.0,
+            bess_energy_mwh=0.0,
+            pv_capacity_mw=0.0,
+            wind_capacity_mw=0.0,
+            carbon_budget_reduction=0.0,
+            beta_workload=0.0,
+            beta_carbon=0.0,
+            beta_grid=0.0,
+            beta_ramp=0.0,
+            scenario_indices=[7],
+            carbon_cuts=[impossible_cut],
+        )
+        self.assertFalse(cut_master.feasible)
+        self.assertEqual(cut_master.carbon_cut_count, 1)
+
+        cut_diagnostic = scheduler.solve_saa_wind_solar_storage(
+            inputs,
+            [scenario],
+            g_max_mw=2.0,
+            r_max_mw=2.0,
+            p_grid_initial_mw=0.0,
+            bess_power_mw=0.0,
+            bess_energy_mwh=0.0,
+            pv_capacity_mw=0.0,
+            wind_capacity_mw=0.0,
+            carbon_budget_reduction=0.0,
+            beta_workload=0.0,
+            beta_carbon=1.0,
+            beta_grid=0.0,
+            beta_ramp=0.0,
+            scenario_indices=[7],
+            carbon_cuts=[impossible_cut],
+            minimize_carbon_violations=True,
+        )
+        self.assertTrue(cut_diagnostic.feasible, cut_diagnostic.solver_status)
+        self.assertEqual(cut_diagnostic.carbon_cut_violation_lower_bound, 1)
 
     def test_cumulative_envelope_prevents_early_and_late_batch_execution(self) -> None:
         inputs = [
