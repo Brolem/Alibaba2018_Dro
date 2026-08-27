@@ -125,6 +125,30 @@ class MainlineSchedulerTests(unittest.TestCase):
         self.assertFalse(replay.grid_limit_violation)
         self.assertFalse(replay.ramp_violation)
 
+        decomposed = scheduler.solve_decomposed_saa_wind_solar_storage(
+            inputs,
+            [scenario],
+            g_max_mw=2.0,
+            r_max_mw=2.0,
+            p_grid_initial_mw=0.0,
+            bess_power_mw=0.0,
+            bess_energy_mwh=0.0,
+            pv_capacity_mw=0.0,
+            wind_capacity_mw=0.0,
+            carbon_budget_reduction=0.0,
+            beta_workload=0.0,
+            beta_carbon=0.0,
+            beta_grid=0.0,
+            beta_ramp=0.0,
+            max_iterations=2,
+            replay_workers=2,
+        )
+        self.assertTrue(decomposed.feasible)
+        self.assertEqual(decomposed.solver_status, "optimal_decomposed")
+        self.assertEqual(decomposed.decomposition_iterations, 1)
+        self.assertEqual(decomposed.active_scenario_count, 1)
+        self.assertEqual(decomposed.scenario_count, 1)
+
     def test_cumulative_envelope_prevents_early_and_late_batch_execution(self) -> None:
         inputs = [
             _input(

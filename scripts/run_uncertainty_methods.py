@@ -33,7 +33,7 @@ from alibaba2018_dro.scenarios import (
 from alibaba2018_dro.scheduler import (
     _peak_load,
     replay_joint_scenario_with_batch_recourse,
-    solve_saa_wind_solar_storage,
+    solve_decomposed_saa_wind_solar_storage,
 )
 
 
@@ -56,6 +56,8 @@ RUN_FIELDS = (
     "solver_status",
     "solver_runtime_seconds",
     "mip_gap",
+    "decomposition_iterations",
+    "active_scenario_count",
     "nominal_grid_cost_usd",
     "nominal_bess_degradation_cost_usd",
     "nominal_operating_cost_usd",
@@ -272,6 +274,8 @@ def _run_config(
     envelope_csv: Path,
     stats_json: Path,
     time_limit_seconds: float | None,
+    decomposition_max_iterations: int,
+    replay_workers: int,
 ) -> dict[str, object]:
     return {
         "schema_version": 1,
@@ -286,6 +290,8 @@ def _run_config(
                 BESS_DEGRADATION_COST_USD_PER_MWH_THROUGHPUT
             ),
             "time_limit_seconds_per_solve": time_limit_seconds,
+            "decomposition_max_iterations": decomposition_max_iterations,
+            "replay_workers": replay_workers,
         },
         "source_sha256": {
             "scenario_manifest": sha256_file(manifest_path),
@@ -351,6 +357,16 @@ def main() -> None:
         type=float,
         default=None,
     )
+    parser.add_argument(
+        "--decomposition-max-iterations",
+        type=int,
+        default=8,
+    )
+    parser.add_argument(
+        "--replay-workers",
+        type=int,
+        default=1,
+    )
     args = parser.parse_args()
 
     sample_sizes = tuple(dict.fromkeys(args.sample_sizes))
@@ -360,6 +376,10 @@ def main() -> None:
         raise ValueError(
             f"max-windows must be in [1, {VALIDATION_WINDOWS_PER_FOLD}]"
         )
+    if args.decomposition_max_iterations <= 0:
+        raise ValueError("decomposition-max-iterations must be positive")
+    if args.replay_workers <= 0:
+        raise ValueError("replay-workers must be positive")
 
     args.output_directory.mkdir(parents=True, exist_ok=True)
     config_path = args.output_directory / "run_config.json"
@@ -371,6 +391,8 @@ def main() -> None:
         envelope_csv=args.envelope_csv,
         stats_json=args.stats_json,
         time_limit_seconds=args.time_limit_seconds,
+        decomposition_max_iterations=args.decomposition_max_iterations,
+        replay_workers=args.replay_workers,
     )
     if config_path.exists():
         existing_config = json.loads(config_path.read_text(encoding="utf-8"))
@@ -441,7 +463,7 @@ def main() -> None:
                     f"N={sample_size}",
                     flush=True,
                 )
-                result = solve_saa_wind_solar_storage(
+                result = solve_decomposed_saa_wind_solar_storage(
                     inputs,
                     training_scenarios[:sample_size],
                     g_max_mw=g_max_mw,
@@ -453,6 +475,9 @@ def main() -> None:
                     wind_capacity_mw=wind_capacity_mw,
                     carbon_budget_reduction=DEFAULT_CARBON_BUDGET_REDUCTION,
                     time_limit_seconds=args.time_limit_seconds,
+                    max_iterations=args.decomposition_max_iterations,
+                    display_progress=True,
+                    replay_workers=args.replay_workers,
                 )
                 if result.feasible:
                     replay = replay_joint_scenario_with_batch_recourse(
@@ -474,6 +499,8 @@ def main() -> None:
                         "solver_status": result.solver_status,
                         "solver_runtime_seconds": result.runtime_seconds,
                         "mip_gap": result.mip_gap,
+                        "decomposition_iterations": result.decomposition_iterations,
+                        "active_scenario_count": result.active_scenario_count,
                         "nominal_grid_cost_usd": result.plan.grid_cost,
                         "nominal_bess_degradation_cost_usd": result.plan.bess_degradation_cost,
                         "nominal_operating_cost_usd": result.plan.operating_cost,
@@ -499,6 +526,8 @@ def main() -> None:
                         "solver_status": result.solver_status,
                         "solver_runtime_seconds": result.runtime_seconds,
                         "mip_gap": result.mip_gap,
+                        "decomposition_iterations": result.decomposition_iterations,
+                        "active_scenario_count": result.active_scenario_count,
                         "nominal_grid_cost_usd": "",
                         "nominal_bess_degradation_cost_usd": "",
                         "nominal_operating_cost_usd": "",
