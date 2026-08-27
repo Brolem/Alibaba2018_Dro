@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import Sequence
 
 from .config import (
     BESS_DEGRADATION_COST_USD_PER_MWH_THROUGHPUT,
@@ -12,6 +13,7 @@ from .config import (
     WIND_REFERENCE_MWH,
 )
 from .inputs import HourlyInput
+from .scenarios import ScenarioRealization
 
 try:  # PySCIPOpt 只在 scip_env 里；其它环境仍可导入数据工具。
     from pyscipopt import Model
@@ -59,6 +61,43 @@ class ActualReplayResult:
     carbon_budget_violation_kg: float
     grid_limit_violation_hours: int
     ramp_violation_hours: int
+
+
+@dataclass(frozen=True)
+class SaaDayAheadResult:
+    """SAA 日前计划及其在训练场景上的逐通道违约频率。"""
+
+    plan: DayAheadResult
+    scenario_count: int
+    workload_violation_rate: float
+    carbon_violation_rate: float
+    grid_limit_violation_rate: float
+    ramp_violation_rate: float
+    mean_batch_adjustment_mwh: float = 0.0
+    solver_status: str = "unknown"
+    runtime_seconds: float = 0.0
+    mip_gap: float = math.inf
+
+    @property
+    def feasible(self) -> bool:
+        return self.plan.feasible
+
+
+@dataclass(frozen=True)
+class ScenarioReplayResult:
+    """日前 BESS 固定、批处理有限追索下的联合场景回放。"""
+
+    batch: list[float]
+    batch_adjustment_mwh: float
+    grid: list[float]
+    curtailment: list[float]
+    grid_cost: float
+    operating_cost: float
+    carbon_kg: float
+    workload_violation: bool
+    carbon_violation: bool
+    grid_limit_violation: bool
+    ramp_violation: bool
 
 
 def _infeasible_day_ahead_result() -> DayAheadResult:
@@ -241,10 +280,6 @@ def solve_wind_solar_storage(
         t: model.addVar(lb=0.0, ub=bess_power_mw, name=f"pdis_{t}")
         for t in range(hours)
     }
-    bess_mode = {
-        t: model.addVar(vtype="B", name=f"bess_charge_mode_{t}")
-        for t in range(hours)
-    }
     eta = math.sqrt(bess_efficiency)
     energy = {
         t: model.addVar(
@@ -261,8 +296,9 @@ def solve_wind_solar_storage(
                 batch[t] <= inputs[t].batch_capacity_mw,
                 name=f"effective_capacity_{t}",
             )
-        model.addCons(p_ch[t] <= bess_power_mw * bess_mode[t])
-        model.addCons(p_dis[t] <= bess_power_mw * (1.0 - bess_mode[t]))
+        bess_mode = model.addVar(vtype="B", name=f"bess_charge_mode_{t}")
+        model.addCons(p_ch[t] <= bess_power_mw * bess_mode)
+        model.addCons(p_dis[t] <= bess_power_mw * (1.0 - bess_mode))
         model.addCons(
             energy[t + 1] == energy[t] + eta * p_ch[t] - p_dis[t] / eta,
             name=f"soc_{t}",
@@ -359,6 +395,776 @@ def solve_wind_solar_storage(
         wind_generation=wind,
         curtailment=curtailment_values,
         feasible=True,
+    )
+
+
+def solve_saa_wind_solar_storage(
+    inputs: list[HourlyInput],
+    scenarios: Sequence[ScenarioRealization],
+    *,
+    g_max_mw: float,
+    r_max_mw: float,
+    p_grid_initial_mw: float,
+    bess_power_mw: float,
+    bess_energy_mwh: float,
+    pv_capacity_mw: float,
+    wind_capacity_mw: float,
+    carbon_budget_reduction: float = DEFAULT_CARBON_BUDGET_REDUCTION,
+    beta_workload: float = 0.10,
+    beta_carbon: float = 0.10,
+    beta_grid: float = 0.10,
+    beta_ramp: float = 0.10,
+    solar_reference_mwh: float = SOLAR_REFERENCE_MWH,
+    wind_reference_mwh: float = WIND_REFERENCE_MWH,
+    bess_efficiency: float = 0.90,
+    soc_min: float = 0.10,
+    soc_max: float = 0.90,
+    soc_initial: float = 0.50,
+    bess_degradation_cost_usd_per_mwh_throughput: float = BESS_DEGRADATION_COST_USD_PER_MWH_THROUGHPUT,
+    time_limit_seconds: float | None = None,
+) -> SaaDayAheadResult:
+    """求解带有限批处理追索的四通道等概率 SAA 机会约束。
+
+    日前 BESS 动作和名义批处理参考跨场景共享；场景批处理只能在该场景
+    的释放/截止包络和物理容量内调整。名义成本最优后，依次最小化批处理
+    调整量和场景购电量，不引入人为加权系数。
+    """
+
+    if Model is None:
+        raise RuntimeError("pyscipopt is required; run inside scip_env")
+    if not inputs:
+        raise ValueError("inputs must not be empty")
+    if not scenarios:
+        raise ValueError("scenarios must not be empty")
+    if min(g_max_mw, r_max_mw, bess_power_mw, bess_energy_mwh) < 0.0:
+        raise ValueError("grid and BESS capacities must be non-negative")
+    if not 0.0 <= carbon_budget_reduction < 1.0:
+        raise ValueError("carbon_budget_reduction must be in [0, 1)")
+    if any(
+        not 0.0 <= beta <= 1.0
+        for beta in (beta_workload, beta_carbon, beta_grid, beta_ramp)
+    ):
+        raise ValueError("all SAA violation rates must be in [0, 1]")
+    if not 0.0 < bess_efficiency <= 1.0:
+        raise ValueError("bess_efficiency must be in (0, 1]")
+    if not 0.0 <= soc_min <= soc_initial <= soc_max <= 1.0:
+        raise ValueError("SOC values must satisfy 0 <= min <= initial <= max <= 1")
+    if bess_degradation_cost_usd_per_mwh_throughput < 0.0:
+        raise ValueError("bess_degradation_cost_usd_per_mwh_throughput must be non-negative")
+    if time_limit_seconds is not None and time_limit_seconds <= 0.0:
+        raise ValueError("time_limit_seconds must be positive when provided")
+
+    hours = len(inputs)
+    for scenario in scenarios:
+        scenario_lengths = (
+            len(scenario.cumulative_arrived_core_hours),
+            len(scenario.cumulative_due_core_hours),
+            len(scenario.residual_solar_mwh),
+            len(scenario.residual_wind_mwh),
+            len(scenario.residual_carbon_lbs_per_kwh),
+        )
+        if any(length != hours for length in scenario_lengths):
+            raise ValueError("every SAA scenario must match the input horizon")
+    conversions = {item.workload_mwh_per_core_hour for item in inputs}
+    if len(conversions) != 1 or next(iter(conversions)) <= 0.0:
+        raise ValueError(
+            "inputs must carry one positive workload_mwh_per_core_hour conversion"
+        )
+    workload_conversion = next(iter(conversions))
+
+    p_must = inputs[0].online_mw + inputs[0].base_mw
+    pv, wind = _resource_profiles(
+        inputs,
+        pv_capacity_mw=pv_capacity_mw,
+        wind_capacity_mw=wind_capacity_mw,
+        solar_reference_mwh=solar_reference_mwh,
+        wind_reference_mwh=wind_reference_mwh,
+        actual=False,
+    )
+    baseline_grid = [
+        max(0.0, p_must + item.batch_baseline_mwh - pv[t] - wind[t])
+        for t, item in enumerate(inputs)
+    ]
+    prices = [item.dam_lz_houston_usd_per_mwh for item in inputs]
+    forecast_carbon = [item.forecast_consumed_co2_lbs_per_kwh for item in inputs]
+    baseline_cost = sum(price * grid for price, grid in zip(prices, baseline_grid))
+    baseline_carbon_kg = _carbon_kg(baseline_grid, forecast_carbon)
+    carbon_budget_kg = (1.0 - carbon_budget_reduction) * baseline_carbon_kg
+    batch_total_mwh = sum(item.batch_baseline_mwh for item in inputs)
+
+    scenario_workload_total = (
+        scenarios[0].cumulative_arrived_core_hours[-1] * workload_conversion
+    )
+    if not math.isclose(
+        scenario_workload_total,
+        batch_total_mwh,
+        rel_tol=1e-8,
+        abs_tol=1e-6,
+    ):
+        raise ValueError("SAA workload total and nominal batch total must match")
+
+    model = Model("saa_wind_solar_storage")
+    model.hideOutput()
+    if time_limit_seconds is not None:
+        model.setRealParam("limits/time", time_limit_seconds)
+    batch = {
+        t: model.addVar(lb=0.0, ub=inputs[t].batch_window_mwh, name=f"batch_{t}")
+        for t in range(hours)
+    }
+    grid = {
+        t: model.addVar(lb=0.0, ub=g_max_mw, name=f"grid_{t}")
+        for t in range(hours)
+    }
+    curtailment = {
+        t: model.addVar(lb=0.0, ub=pv[t] + wind[t], name=f"curtailment_{t}")
+        for t in range(hours)
+    }
+    p_ch = {
+        t: model.addVar(lb=0.0, ub=bess_power_mw, name=f"pch_{t}")
+        for t in range(hours)
+    }
+    p_dis = {
+        t: model.addVar(lb=0.0, ub=bess_power_mw, name=f"pdis_{t}")
+        for t in range(hours)
+    }
+    eta = math.sqrt(bess_efficiency)
+    energy = {
+        t: model.addVar(
+            lb=soc_min * bess_energy_mwh,
+            ub=soc_max * bess_energy_mwh,
+            name=f"bess_energy_{t}",
+        )
+        for t in range(hours + 1)
+    }
+    model.addCons(energy[0] == soc_initial * bess_energy_mwh)
+    for t in range(hours):
+        if inputs[t].batch_capacity_mw is not None:
+            model.addCons(batch[t] <= inputs[t].batch_capacity_mw, name=f"effective_capacity_{t}")
+        # SAA 主问题使用充放功率凸包，并在返回前审计互补性。当前校准
+        # 电价下，正的吞吐衰减成本使同时充放严格劣于净充/放等价解。
+        model.addCons(
+            p_ch[t] + p_dis[t] <= bess_power_mw,
+            name=f"bess_charge_discharge_convex_hull_{t}",
+        )
+        model.addCons(
+            energy[t + 1] == energy[t] + eta * p_ch[t] - p_dis[t] / eta,
+            name=f"soc_{t}",
+        )
+        model.addCons(
+            grid[t]
+            == p_must + batch[t] + p_ch[t] - p_dis[t] - pv[t] - wind[t] + curtailment[t],
+            name=f"power_balance_{t}",
+        )
+    model.addCons(energy[hours] == energy[0], name="terminal_soc")
+    model.addCons(sum(batch[t] for t in range(hours)) == batch_total_mwh, name="batch_energy_conservation")
+    if all(
+        item.batch_cumulative_arrived_mwh is not None
+        and item.batch_cumulative_due_mwh is not None
+        for item in inputs
+    ):
+        cumulative_batch = 0.0
+        for t in range(hours):
+            cumulative_batch += batch[t]
+            model.addCons(
+                cumulative_batch <= float(inputs[t].batch_cumulative_arrived_mwh),
+                name=f"batch_arrival_envelope_{t}",
+            )
+            model.addCons(
+                cumulative_batch >= float(inputs[t].batch_cumulative_due_mwh),
+                name=f"batch_due_envelope_{t}",
+            )
+    previous_grid = p_grid_initial_mw
+    for t in range(hours):
+        model.addCons(grid[t] - previous_grid <= r_max_mw, name=f"ramp_up_{t}")
+        model.addCons(grid[t] - previous_grid >= -r_max_mw, name=f"ramp_down_{t}")
+        previous_grid = grid[t]
+
+    forecast_carbon_expr = sum(
+        forecast_carbon[t] * 1000.0 * LBS_PER_KG * grid[t]
+        for t in range(hours)
+    )
+    model.addCons(forecast_carbon_expr <= carbon_budget_kg, name="forecast_carbon_budget")
+    grid_cost_expr = sum(prices[t] * grid[t] for t in range(hours))
+    degradation_cost_expr = bess_degradation_cost_usd_per_mwh_throughput * sum(
+        p_ch[t] + p_dis[t] for t in range(hours)
+    )
+    primary_objective = grid_cost_expr + degradation_cost_expr
+
+    fallback_batch_capacity_mw = max(item.batch_window_mwh for item in inputs)
+    scenario_batch_capacity_mw = {
+        t: (
+            inputs[t].batch_capacity_mw
+            if inputs[t].batch_capacity_mw is not None
+            else fallback_batch_capacity_mw
+        )
+        for t in range(hours)
+    }
+    batch_upper_mw = max(scenario_batch_capacity_mw.values())
+    scenario_grid_upper_mw = p_must + batch_upper_mw + bess_power_mw
+    workload_big_m = max(batch_total_mwh, scenario_workload_total)
+    grid_big_m = scenario_grid_upper_mw
+    ramp_big_m = 2.0 * scenario_grid_upper_mw + abs(p_grid_initial_mw)
+    scenario_grid: dict[tuple[int, int], object] = {}
+    scenario_batch: dict[tuple[int, int], object] = {}
+    batch_deviation: dict[tuple[int, int], object] = {}
+    violation_workload: dict[int, object] = {}
+    violation_carbon: dict[int, object] = {}
+    violation_grid: dict[int, object] = {}
+    violation_ramp: dict[int, object] = {}
+    for scenario_index, scenario in enumerate(scenarios):
+        solar = _local_resource_profile(
+            [
+                inputs[t].forecast_erco_solar_generation_mwh
+                + scenario.residual_solar_mwh[t]
+                for t in range(hours)
+            ],
+            capacity_mw=pv_capacity_mw,
+            reference_mwh=solar_reference_mwh,
+            label="scenario_pv",
+        )
+        scenario_wind = _local_resource_profile(
+            [
+                inputs[t].forecast_erco_wind_generation_mwh
+                + scenario.residual_wind_mwh[t]
+                for t in range(hours)
+            ],
+            capacity_mw=wind_capacity_mw,
+            reference_mwh=wind_reference_mwh,
+            label="scenario_wind",
+        )
+        scenario_carbon = [
+            max(
+                0.0,
+                inputs[t].forecast_consumed_co2_lbs_per_kwh
+                + scenario.residual_carbon_lbs_per_kwh[t],
+            )
+            for t in range(hours)
+        ]
+        violation_workload[scenario_index] = model.addVar(
+            vtype="B", name=f"violate_workload_{scenario_index}"
+        )
+        violation_carbon[scenario_index] = model.addVar(
+            vtype="B", name=f"violate_carbon_{scenario_index}"
+        )
+        violation_grid[scenario_index] = model.addVar(
+            vtype="B", name=f"violate_grid_{scenario_index}"
+        )
+        violation_ramp[scenario_index] = model.addVar(
+            vtype="B", name=f"violate_ramp_{scenario_index}"
+        )
+        cumulative_batch = 0.0
+        carbon_expr = 0.0
+        carbon_big_m = sum(
+            scenario_carbon[t] * 1000.0 * LBS_PER_KG * scenario_grid_upper_mw
+            for t in range(hours)
+        )
+        scenario_previous_grid: object = p_grid_initial_mw
+        for t in range(hours):
+            scenario_batch[scenario_index, t] = model.addVar(
+                lb=0.0,
+                ub=scenario_batch_capacity_mw[t],
+                name=f"saa_batch_{scenario_index}_{t}",
+            )
+            deviation_positive = model.addVar(
+                lb=0.0, name=f"saa_batch_dev_pos_{scenario_index}_{t}"
+            )
+            deviation_negative = model.addVar(
+                lb=0.0, name=f"saa_batch_dev_neg_{scenario_index}_{t}"
+            )
+            model.addCons(
+                scenario_batch[scenario_index, t] - batch[t]
+                == deviation_positive - deviation_negative,
+                name=f"saa_batch_deviation_{scenario_index}_{t}",
+            )
+            batch_deviation[scenario_index, t] = (
+                deviation_positive + deviation_negative
+            )
+            cumulative_batch += scenario_batch[scenario_index, t]
+            arrived_mwh = (
+                scenario.cumulative_arrived_core_hours[t] * workload_conversion
+            )
+            due_mwh = scenario.cumulative_due_core_hours[t] * workload_conversion
+            model.addCons(
+                cumulative_batch <= arrived_mwh + workload_big_m * violation_workload[scenario_index],
+                name=f"saa_arrival_{scenario_index}_{t}",
+            )
+            model.addCons(
+                cumulative_batch >= due_mwh - workload_big_m * violation_workload[scenario_index],
+                name=f"saa_due_{scenario_index}_{t}",
+            )
+            scenario_grid[scenario_index, t] = model.addVar(
+                lb=0.0,
+                ub=scenario_grid_upper_mw,
+                name=f"saa_grid_{scenario_index}_{t}",
+            )
+            scenario_curtailment = model.addVar(
+                lb=0.0,
+                ub=solar[t] + scenario_wind[t],
+                name=f"saa_curtailment_{scenario_index}_{t}",
+            )
+            model.addCons(
+                scenario_grid[scenario_index, t]
+                == p_must
+                + scenario_batch[scenario_index, t]
+                + p_ch[t]
+                - p_dis[t]
+                - solar[t]
+                - scenario_wind[t]
+                + scenario_curtailment,
+                name=f"saa_power_balance_{scenario_index}_{t}",
+            )
+            model.addCons(
+                scenario_grid[scenario_index, t]
+                <= g_max_mw + grid_big_m * violation_grid[scenario_index],
+                name=f"saa_grid_limit_{scenario_index}_{t}",
+            )
+            model.addCons(
+                scenario_grid[scenario_index, t] - scenario_previous_grid
+                <= r_max_mw + ramp_big_m * violation_ramp[scenario_index],
+                name=f"saa_ramp_up_{scenario_index}_{t}",
+            )
+            model.addCons(
+                scenario_grid[scenario_index, t] - scenario_previous_grid
+                >= -r_max_mw - ramp_big_m * violation_ramp[scenario_index],
+                name=f"saa_ramp_down_{scenario_index}_{t}",
+            )
+            scenario_previous_grid = scenario_grid[scenario_index, t]
+            carbon_expr += (
+                scenario_carbon[t]
+                * 1000.0
+                * LBS_PER_KG
+                * scenario_grid[scenario_index, t]
+            )
+        model.addCons(
+            sum(scenario_batch[scenario_index, t] for t in range(hours))
+            == batch_total_mwh,
+            name=f"saa_batch_energy_conservation_{scenario_index}",
+        )
+        model.addCons(
+            carbon_expr <= carbon_budget_kg + carbon_big_m * violation_carbon[scenario_index],
+            name=f"saa_carbon_{scenario_index}",
+        )
+
+    scenario_count = len(scenarios)
+    model.addCons(
+        sum(violation_workload.values()) <= beta_workload * scenario_count,
+        name="saa_workload_chance",
+    )
+    model.addCons(
+        sum(violation_carbon.values()) <= beta_carbon * scenario_count,
+        name="saa_carbon_chance",
+    )
+    model.addCons(
+        sum(violation_grid.values()) <= beta_grid * scenario_count,
+        name="saa_grid_chance",
+    )
+    model.addCons(
+        sum(violation_ramp.values()) <= beta_ramp * scenario_count,
+        name="saa_ramp_chance",
+    )
+    model.setObjective(primary_objective, "minimize")
+    model.optimize()
+    if model.getStatus() != "optimal":
+        solver_status = str(model.getStatus())
+        return SaaDayAheadResult(
+            plan=_infeasible_day_ahead_result(),
+            scenario_count=scenario_count,
+            workload_violation_rate=0.0,
+            carbon_violation_rate=0.0,
+            grid_limit_violation_rate=0.0,
+            ramp_violation_rate=0.0,
+            solver_status=solver_status,
+            runtime_seconds=model.getSolvingTime(),
+            mip_gap=model.getGap(),
+        )
+
+    # 主问题只负责选择日前动作并验证“存在可行场景追索”。主问题最优后，
+    # 将每个训练场景拆成独立连续回放，避免为不影响日前目标的词典序整理
+    # 反复变换整个 30 天联合 MILP。
+    batch_values = [model.getVal(batch[t]) for t in range(hours)]
+    grid_values = [model.getVal(grid[t]) for t in range(hours)]
+    charge_values = [model.getVal(p_ch[t]) for t in range(hours)]
+    discharge_values = [model.getVal(p_dis[t]) for t in range(hours)]
+    simultaneous_hours = [
+        t
+        for t in range(hours)
+        if min(charge_values[t], discharge_values[t]) > 1e-6
+    ]
+    if simultaneous_hours:
+        raise RuntimeError(
+            "SAA convex-hull solution violates charge/discharge complementarity "
+            f"in {len(simultaneous_hours)} hours"
+        )
+    curtailment_values = [model.getVal(curtailment[t]) for t in range(hours)]
+    grid_cost = sum(price * value for price, value in zip(prices, grid_values))
+    degradation_cost = bess_degradation_cost(
+        charge_values,
+        discharge_values,
+        bess_degradation_cost_usd_per_mwh_throughput,
+    )
+    forecast_carbon_kg = _carbon_kg(grid_values, forecast_carbon)
+    plan = DayAheadResult(
+        baseline_cost=baseline_cost,
+        baseline_carbon_kg=baseline_carbon_kg,
+        grid_cost=grid_cost,
+        bess_degradation_cost=degradation_cost,
+        operating_cost=grid_cost + degradation_cost,
+        cost_reduction=(
+            (baseline_cost - grid_cost - degradation_cost) / baseline_cost
+            if baseline_cost
+            else 0.0
+        ),
+        forecast_carbon_kg=forecast_carbon_kg,
+        carbon_budget_kg=carbon_budget_kg,
+        carbon_budget_slack_kg=carbon_budget_kg - forecast_carbon_kg,
+        batch=batch_values,
+        grid=grid_values,
+        bess_charge=charge_values,
+        bess_discharge=discharge_values,
+        pv_generation=pv,
+        wind_generation=wind,
+        curtailment=curtailment_values,
+        feasible=True,
+    )
+    training_replays = [
+        replay_joint_scenario_with_batch_recourse(
+            inputs,
+            plan,
+            scenario,
+            pv_capacity_mw=pv_capacity_mw,
+            wind_capacity_mw=wind_capacity_mw,
+            g_max_mw=g_max_mw,
+            r_max_mw=r_max_mw,
+            p_grid_initial_mw=p_grid_initial_mw,
+            solar_reference_mwh=solar_reference_mwh,
+            wind_reference_mwh=wind_reference_mwh,
+        )
+        for scenario in scenarios
+    ]
+    return SaaDayAheadResult(
+        plan=plan,
+        scenario_count=scenario_count,
+        workload_violation_rate=(
+            sum(result.workload_violation for result in training_replays)
+            / scenario_count
+        ),
+        carbon_violation_rate=(
+            sum(result.carbon_violation for result in training_replays)
+            / scenario_count
+        ),
+        grid_limit_violation_rate=(
+            sum(result.grid_limit_violation for result in training_replays)
+            / scenario_count
+        ),
+        ramp_violation_rate=(
+            sum(result.ramp_violation for result in training_replays)
+            / scenario_count
+        ),
+        mean_batch_adjustment_mwh=(
+            sum(result.batch_adjustment_mwh for result in training_replays)
+            / scenario_count
+        ),
+        solver_status=str(model.getStatus()),
+        runtime_seconds=model.getSolvingTime(),
+        mip_gap=model.getGap(),
+    )
+
+
+def replay_joint_scenario(
+    inputs: list[HourlyInput],
+    plan: DayAheadResult,
+    scenario: ScenarioRealization,
+    *,
+    pv_capacity_mw: float,
+    wind_capacity_mw: float,
+    g_max_mw: float,
+    r_max_mw: float,
+    p_grid_initial_mw: float,
+    solar_reference_mwh: float = SOLAR_REFERENCE_MWH,
+    wind_reference_mwh: float = WIND_REFERENCE_MWH,
+    tolerance: float = 1e-7,
+) -> ScenarioReplayResult:
+    """固定日前批处理/BESS，在一个联合残差与算力包络场景上回放。"""
+
+    if not plan.feasible:
+        raise ValueError("cannot replay an infeasible day-ahead plan")
+    hours = len(inputs)
+    if hours != len(plan.batch):
+        raise ValueError("inputs and plan must have the same horizon")
+    scenario_lengths = (
+        len(scenario.cumulative_arrived_core_hours),
+        len(scenario.cumulative_due_core_hours),
+        len(scenario.residual_solar_mwh),
+        len(scenario.residual_wind_mwh),
+        len(scenario.residual_carbon_lbs_per_kwh),
+    )
+    if any(length != hours for length in scenario_lengths):
+        raise ValueError("scenario must match the input horizon")
+    if tolerance < 0.0:
+        raise ValueError("tolerance must be non-negative")
+    conversions = {item.workload_mwh_per_core_hour for item in inputs}
+    if len(conversions) != 1 or next(iter(conversions)) <= 0.0:
+        raise ValueError(
+            "inputs must carry one positive workload_mwh_per_core_hour conversion"
+        )
+    workload_conversion = next(iter(conversions))
+
+    pv = _local_resource_profile(
+        [
+            inputs[t].forecast_erco_solar_generation_mwh
+            + scenario.residual_solar_mwh[t]
+            for t in range(hours)
+        ],
+        capacity_mw=pv_capacity_mw,
+        reference_mwh=solar_reference_mwh,
+        label="scenario_pv",
+    )
+    wind = _local_resource_profile(
+        [
+            inputs[t].forecast_erco_wind_generation_mwh
+            + scenario.residual_wind_mwh[t]
+            for t in range(hours)
+        ],
+        capacity_mw=wind_capacity_mw,
+        reference_mwh=wind_reference_mwh,
+        label="scenario_wind",
+    )
+    p_must = inputs[0].online_mw + inputs[0].base_mw
+    residual_load = [
+        p_must + plan.batch[t] + plan.bess_charge[t] - plan.bess_discharge[t]
+        for t in range(hours)
+    ]
+    grid = [max(0.0, residual_load[t] - pv[t] - wind[t]) for t in range(hours)]
+    curtailment = [
+        max(0.0, pv[t] + wind[t] - residual_load[t]) for t in range(hours)
+    ]
+    carbon = [
+        max(
+            0.0,
+            inputs[t].forecast_consumed_co2_lbs_per_kwh
+            + scenario.residual_carbon_lbs_per_kwh[t],
+        )
+        for t in range(hours)
+    ]
+    carbon_kg = _carbon_kg(grid, carbon)
+    prices = [item.dam_lz_houston_usd_per_mwh for item in inputs]
+    grid_cost = sum(price * value for price, value in zip(prices, grid, strict=True))
+
+    cumulative = 0.0
+    workload_violation = False
+    for t, value in enumerate(plan.batch):
+        cumulative += value
+        arrived = scenario.cumulative_arrived_core_hours[t] * workload_conversion
+        due = scenario.cumulative_due_core_hours[t] * workload_conversion
+        if cumulative > arrived + tolerance or cumulative < due - tolerance:
+            workload_violation = True
+            break
+    grid_limit_violation = any(value > g_max_mw + tolerance for value in grid)
+    ramp_violation = any(
+        abs(value - previous) > r_max_mw + tolerance
+        for value, previous in zip(
+            grid,
+            [p_grid_initial_mw, *grid[:-1]],
+            strict=True,
+        )
+    )
+    return ScenarioReplayResult(
+        batch=list(plan.batch),
+        batch_adjustment_mwh=0.0,
+        grid=grid,
+        curtailment=curtailment,
+        grid_cost=grid_cost,
+        operating_cost=grid_cost + plan.bess_degradation_cost,
+        carbon_kg=carbon_kg,
+        workload_violation=workload_violation,
+        carbon_violation=carbon_kg > plan.carbon_budget_kg + tolerance,
+        grid_limit_violation=grid_limit_violation,
+        ramp_violation=ramp_violation,
+    )
+
+
+def replay_joint_scenario_with_batch_recourse(
+    inputs: list[HourlyInput],
+    plan: DayAheadResult,
+    scenario: ScenarioRealization,
+    *,
+    pv_capacity_mw: float,
+    wind_capacity_mw: float,
+    g_max_mw: float,
+    r_max_mw: float,
+    p_grid_initial_mw: float,
+    solar_reference_mwh: float = SOLAR_REFERENCE_MWH,
+    wind_reference_mwh: float = WIND_REFERENCE_MWH,
+    tolerance: float = 1e-7,
+) -> ScenarioReplayResult:
+    """固定日前 BESS，将名义批处理投影到一个场景的可调度域后回放。
+
+    先最小化相对名义批处理计划的 L1 调整量，再最小化购电量。这是用于
+    标定的离线有限追索，不表示已实现在线因果控制。
+    """
+
+    if Model is None:
+        raise RuntimeError("pyscipopt is required; run inside scip_env")
+    if not plan.feasible:
+        raise ValueError("cannot replay an infeasible day-ahead plan")
+    hours = len(inputs)
+    if hours != len(plan.batch):
+        raise ValueError("inputs and plan must have the same horizon")
+    scenario_lengths = (
+        len(scenario.cumulative_arrived_core_hours),
+        len(scenario.cumulative_due_core_hours),
+        len(scenario.residual_solar_mwh),
+        len(scenario.residual_wind_mwh),
+        len(scenario.residual_carbon_lbs_per_kwh),
+    )
+    if any(length != hours for length in scenario_lengths):
+        raise ValueError("scenario must match the input horizon")
+    if tolerance < 0.0:
+        raise ValueError("tolerance must be non-negative")
+    conversions = {item.workload_mwh_per_core_hour for item in inputs}
+    if len(conversions) != 1 or next(iter(conversions)) <= 0.0:
+        raise ValueError(
+            "inputs must carry one positive workload_mwh_per_core_hour conversion"
+        )
+    workload_conversion = next(iter(conversions))
+
+    pv = _local_resource_profile(
+        [
+            inputs[t].forecast_erco_solar_generation_mwh
+            + scenario.residual_solar_mwh[t]
+            for t in range(hours)
+        ],
+        capacity_mw=pv_capacity_mw,
+        reference_mwh=solar_reference_mwh,
+        label="scenario_pv",
+    )
+    wind = _local_resource_profile(
+        [
+            inputs[t].forecast_erco_wind_generation_mwh
+            + scenario.residual_wind_mwh[t]
+            for t in range(hours)
+        ],
+        capacity_mw=wind_capacity_mw,
+        reference_mwh=wind_reference_mwh,
+        label="scenario_wind",
+    )
+    fallback_capacity_mw = max(item.batch_window_mwh for item in inputs)
+    capacity_mw = [
+        item.batch_capacity_mw
+        if item.batch_capacity_mw is not None
+        else fallback_capacity_mw
+        for item in inputs
+    ]
+    model = Model("scenario_batch_recourse")
+    model.hideOutput()
+    batch = {
+        t: model.addVar(lb=0.0, ub=capacity_mw[t], name=f"batch_{t}")
+        for t in range(hours)
+    }
+    grid_upper_mw = (
+        inputs[0].online_mw
+        + inputs[0].base_mw
+        + max(capacity_mw)
+        + max(plan.bess_charge, default=0.0)
+    )
+    grid = {
+        t: model.addVar(lb=0.0, ub=grid_upper_mw, name=f"grid_{t}")
+        for t in range(hours)
+    }
+    curtailment = {
+        t: model.addVar(lb=0.0, ub=pv[t] + wind[t], name=f"curtailment_{t}")
+        for t in range(hours)
+    }
+    deviations: list[object] = []
+    cumulative_batch = 0.0
+    p_must = inputs[0].online_mw + inputs[0].base_mw
+    for t in range(hours):
+        deviation_positive = model.addVar(lb=0.0, name=f"dev_pos_{t}")
+        deviation_negative = model.addVar(lb=0.0, name=f"dev_neg_{t}")
+        model.addCons(
+            batch[t] - plan.batch[t] == deviation_positive - deviation_negative
+        )
+        deviations.append(deviation_positive + deviation_negative)
+        cumulative_batch += batch[t]
+        model.addCons(
+            cumulative_batch
+            <= scenario.cumulative_arrived_core_hours[t] * workload_conversion
+        )
+        model.addCons(
+            cumulative_batch
+            >= scenario.cumulative_due_core_hours[t] * workload_conversion
+        )
+        model.addCons(
+            grid[t]
+            == p_must
+            + batch[t]
+            + plan.bess_charge[t]
+            - plan.bess_discharge[t]
+            - pv[t]
+            - wind[t]
+            + curtailment[t]
+        )
+    model.addCons(sum(batch.values()) == sum(plan.batch))
+    total_deviation = sum(deviations)
+    model.setObjective(total_deviation, "minimize")
+    model.optimize()
+    if model.getStatus() != "optimal":
+        raise RuntimeError(
+            f"batch recourse replay is {model.getStatus()}; scenario may be physically infeasible"
+        )
+    deviation_value = model.getObjVal()
+    model.freeTransform()
+    model.addCons(
+        total_deviation
+        <= deviation_value + max(1e-6, abs(deviation_value) * 1e-9)
+    )
+    model.setObjective(sum(grid.values()), "minimize")
+    model.optimize()
+    if model.getStatus() != "optimal":
+        raise RuntimeError(f"batch recourse replay second stage is {model.getStatus()}")
+
+    batch_values = [model.getVal(batch[t]) for t in range(hours)]
+    grid_values = [model.getVal(grid[t]) for t in range(hours)]
+    curtailment_values = [model.getVal(curtailment[t]) for t in range(hours)]
+    carbon = [
+        max(
+            0.0,
+            inputs[t].forecast_consumed_co2_lbs_per_kwh
+            + scenario.residual_carbon_lbs_per_kwh[t],
+        )
+        for t in range(hours)
+    ]
+    carbon_kg = _carbon_kg(grid_values, carbon)
+    prices = [item.dam_lz_houston_usd_per_mwh for item in inputs]
+    grid_cost = sum(
+        price * value for price, value in zip(prices, grid_values, strict=True)
+    )
+    grid_limit_violation = any(
+        value > g_max_mw + tolerance for value in grid_values
+    )
+    ramp_violation = any(
+        abs(value - previous) > r_max_mw + tolerance
+        for value, previous in zip(
+            grid_values,
+            [p_grid_initial_mw, *grid_values[:-1]],
+            strict=True,
+        )
+    )
+    return ScenarioReplayResult(
+        batch=batch_values,
+        batch_adjustment_mwh=sum(
+            abs(actual - nominal)
+            for actual, nominal in zip(batch_values, plan.batch, strict=True)
+        ),
+        grid=grid_values,
+        curtailment=curtailment_values,
+        grid_cost=grid_cost,
+        operating_cost=grid_cost + plan.bess_degradation_cost,
+        carbon_kg=carbon_kg,
+        workload_violation=False,
+        carbon_violation=carbon_kg > plan.carbon_budget_kg + tolerance,
+        grid_limit_violation=grid_limit_violation,
+        ramp_violation=ramp_violation,
     )
 
 

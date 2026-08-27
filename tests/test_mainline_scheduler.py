@@ -8,6 +8,7 @@ from alibaba2018_dro.config import (
     DEFAULT_CARBON_BUDGET_REDUCTION,
 )
 from alibaba2018_dro.inputs import HourlyInput
+from alibaba2018_dro.scenarios import ScenarioRealization
 
 
 def _input(
@@ -24,6 +25,7 @@ def _input(
     actual_wind: float = 0.0,
     cumulative_arrived: float | None = None,
     cumulative_due: float | None = None,
+    workload_mwh_per_core_hour: float = 0.0,
 ) -> HourlyInput:
     return HourlyInput(
         hour=hour,
@@ -41,6 +43,7 @@ def _input(
         actual_erco_wind_generation_mwh=actual_wind,
         batch_cumulative_arrived_mwh=cumulative_arrived,
         batch_cumulative_due_mwh=cumulative_due,
+        workload_mwh_per_core_hour=workload_mwh_per_core_hour,
     )
 
 
@@ -52,6 +55,76 @@ class MainlineConfigTests(unittest.TestCase):
 
 @unittest.skipIf(scheduler.Model is None, "PySCIPOpt is only available in scip_env")
 class MainlineSchedulerTests(unittest.TestCase):
+    def test_saa_workload_chance_constraint_uses_joint_scenario_envelope(self) -> None:
+        inputs = [
+            _input(
+                0,
+                price=1.0,
+                forecast_carbon=0.0,
+                batch_baseline=1.0,
+                batch_window=1.0,
+                workload_mwh_per_core_hour=1.0,
+            ),
+            _input(
+                1,
+                price=10.0,
+                forecast_carbon=0.0,
+                batch_baseline=0.0,
+                batch_window=1.0,
+                workload_mwh_per_core_hour=1.0,
+            ),
+        ]
+        scenario = ScenarioRealization(
+            scenario_id=0,
+            workload_source_days_one_based=(2,),
+            energy_delivery_dates=("2024-01-01",),
+            cumulative_arrived_core_hours=(0.0, 1.0),
+            cumulative_due_core_hours=(0.0, 1.0),
+            residual_solar_mwh=(0.0, 0.0),
+            residual_wind_mwh=(0.0, 0.0),
+            residual_carbon_lbs_per_kwh=(0.0, 0.0),
+        )
+        result = scheduler.solve_saa_wind_solar_storage(
+            inputs,
+            [scenario],
+            g_max_mw=2.0,
+            r_max_mw=2.0,
+            p_grid_initial_mw=0.0,
+            bess_power_mw=0.0,
+            bess_energy_mwh=0.0,
+            pv_capacity_mw=0.0,
+            wind_capacity_mw=0.0,
+            carbon_budget_reduction=0.0,
+            beta_workload=0.0,
+            beta_carbon=0.0,
+            beta_grid=0.0,
+            beta_ramp=0.0,
+        )
+
+        self.assertTrue(result.feasible)
+        # 名义参考追随低价时段；场景追索再把未到达工作移到第 2 小时。
+        self.assertAlmostEqual(result.plan.batch[0], 1.0, places=6)
+        self.assertAlmostEqual(result.plan.batch[1], 0.0, places=6)
+        self.assertEqual(result.workload_violation_rate, 0.0)
+        self.assertAlmostEqual(result.mean_batch_adjustment_mwh, 2.0, places=6)
+        replay = scheduler.replay_joint_scenario_with_batch_recourse(
+            inputs,
+            result.plan,
+            scenario,
+            pv_capacity_mw=0.0,
+            wind_capacity_mw=0.0,
+            g_max_mw=2.0,
+            r_max_mw=2.0,
+            p_grid_initial_mw=0.0,
+        )
+        self.assertAlmostEqual(replay.batch[0], 0.0, places=6)
+        self.assertAlmostEqual(replay.batch[1], 1.0, places=6)
+        self.assertAlmostEqual(replay.batch_adjustment_mwh, 2.0, places=6)
+        self.assertFalse(replay.workload_violation)
+        self.assertFalse(replay.carbon_violation)
+        self.assertFalse(replay.grid_limit_violation)
+        self.assertFalse(replay.ramp_violation)
+
     def test_cumulative_envelope_prevents_early_and_late_batch_execution(self) -> None:
         inputs = [
             _input(

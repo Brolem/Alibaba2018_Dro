@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,6 +44,7 @@ class HourlyInput:
     batch_cumulative_due_mwh: float | None = None
     effective_capacity_cores: float | None = None
     workload_scale: float = 1.0
+    workload_mwh_per_core_hour: float = 0.0
 
 
 def _energy_core_rows(window_csv: Path, core_hours: int) -> list[dict[str, str]]:
@@ -105,6 +107,29 @@ def build_hourly_input(
 ) -> list[HourlyInput]:
     """取一个能源窗口的 30 天核心期，与 workload 包络逐小时对齐并换算成 MW。"""
 
+    core_hours = core_days * 24
+    energy = _energy_core_rows(window_csv, core_hours)
+    return build_hourly_input_from_rows(
+        energy,
+        envelope_csv,
+        stats_json,
+        core_days=core_days,
+        scenario=scenario,
+        effective_capacity_fraction=effective_capacity_fraction,
+    )
+
+
+def build_hourly_input_from_rows(
+    energy_rows: Sequence[Mapping[str, object]],
+    envelope_csv: Path,
+    stats_json: Path,
+    *,
+    core_days: int = 30,
+    scenario: str = "base",
+    effective_capacity_fraction: float = EFFECTIVE_REPLAY_CAPACITY_FRACTION,
+) -> list[HourlyInput]:
+    """把已按时序排列的能源行与公共 workload 包络对齐并换算为 MW。"""
+
     if scenario not in POWER_SCENARIOS:
         raise ValueError(f"unknown power scenario: {scenario}")
     power = POWER_SCENARIOS[scenario]
@@ -117,7 +142,9 @@ def build_hourly_input(
     )
 
     core_hours = core_days * 24
-    energy = _energy_core_rows(window_csv, core_hours)
+    if len(energy_rows) < core_hours:
+        raise ValueError(f"energy_rows has {len(energy_rows)} hours, need {core_hours}")
+    energy = list(energy_rows[:core_hours])
     envelope = _read_envelope(envelope_csv)
     if len(envelope) < core_hours:
         raise ValueError(
@@ -193,6 +220,7 @@ def build_hourly_input(
                 ),
                 effective_capacity_cores=effective_capacity_cores,
                 workload_scale=workload_scale,
+                workload_mwh_per_core_hour=workload_scale * power_per_core_mw,
             )
         )
     return aligned
