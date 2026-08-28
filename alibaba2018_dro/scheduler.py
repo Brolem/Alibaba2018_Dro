@@ -1,4 +1,4 @@
-"""风光储—柔性算力—碳预算的日前调度与实际回放。"""
+"""联合算力与风光不确定性下的成本—运行可靠性调度与回放。"""
 
 from __future__ import annotations
 
@@ -243,6 +243,7 @@ def solve_wind_solar_storage(
     pv_capacity_mw: float,
     wind_capacity_mw: float,
     carbon_budget_reduction: float = DEFAULT_CARBON_BUDGET_REDUCTION,
+    enforce_carbon_budget: bool = False,
     solar_reference_mwh: float = SOLAR_REFERENCE_MWH,
     wind_reference_mwh: float = WIND_REFERENCE_MWH,
     bess_efficiency: float = 0.90,
@@ -251,9 +252,10 @@ def solve_wind_solar_storage(
     soc_initial: float = 0.50,
     bess_degradation_cost_usd_per_mwh_throughput: float = BESS_DEGRADATION_COST_USD_PER_MWH_THROUGHPUT,
 ) -> DayAheadResult:
-    """求解预测风光、BESS、有效容量和预测碳预算的日前 MILP。
+    """求解预测风光、BESS 与有效算力容量下的日前成本 MILP。
 
-    碳预算基准使用相同风光容量、固定批处理时序和未启用 BESS 的预测购电。
+    碳排放默认仅作事后环境绩效核算。``enforce_carbon_budget`` 只保留给
+    历史诊断复现，论文当前主流程不得启用。
     """
 
     if Model is None:
@@ -381,10 +383,11 @@ def solve_wind_solar_storage(
         forecast_carbon[t] * 1000.0 * LBS_PER_KG * grid[t]
         for t in range(hours)
     )
-    model.addCons(
-        forecast_carbon_expr <= carbon_budget_kg,
-        name="forecast_carbon_budget",
-    )
+    if enforce_carbon_budget:
+        model.addCons(
+            forecast_carbon_expr <= carbon_budget_kg,
+            name="forecast_carbon_budget",
+        )
     grid_cost_expr = sum(prices[t] * grid[t] for t in range(hours))
     degradation_cost_expr = (
         bess_degradation_cost_usd_per_mwh_throughput
@@ -443,6 +446,7 @@ def solve_saa_wind_solar_storage(
     pv_capacity_mw: float,
     wind_capacity_mw: float,
     carbon_budget_reduction: float = DEFAULT_CARBON_BUDGET_REDUCTION,
+    enforce_carbon_budget: bool = False,
     beta_workload: float = 0.10,
     beta_carbon: float = 0.10,
     beta_grid: float = 0.10,
@@ -461,7 +465,7 @@ def solve_saa_wind_solar_storage(
     carbon_cuts: Sequence[CarbonBendersCut] = (),
     minimize_carbon_violations: bool = False,
 ) -> SaaDayAheadResult:
-    """求解带有限批处理追索的四通道等概率 SAA 机会约束。
+    """求解带有限批处理追索的三通道等概率 SAA 机会约束。
 
     日前 BESS 动作和名义批处理参考跨场景共享；场景批处理只能在该场景
     的释放/截止包络和物理容量内调整。名义成本最优后，依次最小化批处理
@@ -501,6 +505,8 @@ def solve_saa_wind_solar_storage(
         raise ValueError("bess_degradation_cost_usd_per_mwh_throughput must be non-negative")
     if time_limit_seconds is not None and time_limit_seconds <= 0.0:
         raise ValueError("time_limit_seconds must be positive when provided")
+    if not enforce_carbon_budget and (carbon_cuts or minimize_carbon_violations):
+        raise ValueError("carbon diagnostics require enforce_carbon_budget=True")
 
     hours = len(inputs)
     for scenario in scenarios:
@@ -631,7 +637,11 @@ def solve_saa_wind_solar_storage(
         forecast_carbon[t] * 1000.0 * LBS_PER_KG * grid[t]
         for t in range(hours)
     )
-    model.addCons(forecast_carbon_expr <= carbon_budget_kg, name="forecast_carbon_budget")
+    if enforce_carbon_budget:
+        model.addCons(
+            forecast_carbon_expr <= carbon_budget_kg,
+            name="forecast_carbon_budget",
+        )
     grid_cost_expr = sum(prices[t] * grid[t] for t in range(hours))
     degradation_cost_expr = bess_degradation_cost_usd_per_mwh_throughput * sum(
         p_ch[t] + p_dis[t] for t in range(hours)
@@ -698,7 +708,8 @@ def solve_saa_wind_solar_storage(
         violation_workload[scenario_index] = model.addVar(
             vtype="B", name=f"violate_workload_{scenario_index}"
         )
-        carbon_violation_var(scenario_index)
+        if enforce_carbon_budget:
+            carbon_violation_var(scenario_index)
         violation_grid[scenario_index] = model.addVar(
             vtype="B", name=f"violate_grid_{scenario_index}"
         )
@@ -793,12 +804,15 @@ def solve_saa_wind_solar_storage(
             == batch_total_mwh,
             name=f"saa_batch_energy_conservation_{scenario_index}",
         )
-        model.addCons(
-            carbon_expr <= carbon_budget_kg + carbon_big_m * violation_carbon[scenario_index],
-            name=f"saa_carbon_{scenario_index}",
-        )
+        if enforce_carbon_budget:
+            model.addCons(
+                carbon_expr
+                <= carbon_budget_kg
+                + carbon_big_m * violation_carbon[scenario_index],
+                name=f"saa_carbon_{scenario_index}",
+            )
 
-    for cut_index, cut in enumerate(carbon_cuts):
+    for cut_index, cut in enumerate(carbon_cuts if enforce_carbon_budget else ()):
         if len(cut.charge_gradient_kg_per_mw) != hours or len(
             cut.discharge_gradient_kg_per_mw
         ) != hours:
@@ -823,7 +837,7 @@ def solve_saa_wind_solar_storage(
         sum(violation_workload.values()) <= beta_workload * chance_denominator,
         name="saa_workload_chance",
     )
-    if not minimize_carbon_violations:
+    if enforce_carbon_budget and not minimize_carbon_violations:
         model.addCons(
             sum(violation_carbon.values()) <= beta_carbon * chance_denominator,
             name="saa_carbon_chance",
@@ -969,6 +983,8 @@ def solve_saa_wind_solar_storage(
         carbon_violation_rate=(
             sum(result.carbon_violation for result in training_replays)
             / scenario_count
+            if enforce_carbon_budget
+            else 0.0
         ),
         grid_limit_violation_rate=(
             sum(result.grid_limit_violation for result in training_replays)
@@ -1117,9 +1133,10 @@ def replay_joint_scenario_with_batch_recourse(
     wind_reference_mwh: float = WIND_REFERENCE_MWH,
     tolerance: float = 1e-7,
 ) -> ScenarioReplayResult:
-    """固定日前 BESS，在一个场景中求风险优先的有限批处理追索。
+    """固定日前 BESS，在一个场景中求运行风险优先的有限批处理追索。
 
-    依次最小化碳/并网/爬坡违反数、相对名义计划的 L1 调整量和购电量。
+    依次最小化并网/爬坡违反数、相对名义计划的 L1 调整量和购电量。
+    碳排放由最终购电量核算，不参与追索决策。
     这是用于标定的离线有限追索，不表示已实现在线因果控制。
     """
 
@@ -1196,7 +1213,6 @@ def replay_joint_scenario_with_batch_recourse(
         t: model.addVar(lb=0.0, ub=pv[t] + wind[t], name=f"curtailment_{t}")
         for t in range(hours)
     }
-    violation_carbon = model.addVar(vtype="B", name="violate_carbon")
     violation_grid = model.addVar(vtype="B", name="violate_grid")
     violation_ramp = model.addVar(vtype="B", name="violate_ramp")
     deviations: list[object] = []
@@ -1251,18 +1267,7 @@ def replay_joint_scenario_with_batch_recourse(
         )
         for t in range(hours)
     ]
-    carbon_expr = sum(
-        carbon[t] * 1000.0 * LBS_PER_KG * grid[t] for t in range(hours)
-    )
-    carbon_big_m = sum(
-        carbon[t] * 1000.0 * LBS_PER_KG * grid_upper_mw
-        for t in range(hours)
-    )
-    model.addCons(
-        carbon_expr
-        <= plan.carbon_budget_kg + carbon_big_m * violation_carbon
-    )
-    total_risk_violations = violation_carbon + violation_grid + violation_ramp
+    total_risk_violations = violation_grid + violation_ramp
     model.setObjective(total_risk_violations, "minimize")
     model.optimize()
     if model.getStatus() != "optimal":
@@ -1270,14 +1275,12 @@ def replay_joint_scenario_with_batch_recourse(
             f"batch recourse risk stage is {model.getStatus()}"
         )
     selected_risk = (
-        round(model.getVal(violation_carbon)),
         round(model.getVal(violation_grid)),
         round(model.getVal(violation_ramp)),
     )
     model.freeTransform()
-    model.addCons(violation_carbon == selected_risk[0])
-    model.addCons(violation_grid == selected_risk[1])
-    model.addCons(violation_ramp == selected_risk[2])
+    model.addCons(violation_grid == selected_risk[0])
+    model.addCons(violation_ramp == selected_risk[1])
     total_deviation = sum(deviations)
     model.setObjective(total_deviation, "minimize")
     model.optimize()
@@ -1327,7 +1330,7 @@ def replay_joint_scenario_with_batch_recourse(
         operating_cost=grid_cost + plan.bess_degradation_cost,
         carbon_kg=carbon_kg,
         workload_violation=False,
-        carbon_violation=carbon_kg > plan.carbon_budget_kg + tolerance,
+        carbon_violation=False,
         grid_limit_violation=grid_limit_violation,
         ramp_violation=ramp_violation,
     )

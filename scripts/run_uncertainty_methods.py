@@ -43,7 +43,6 @@ HELD_OUT_FOLDS = ("fold_1", "fold_2", "fold_3")
 VALIDATION_WINDOWS_PER_FOLD = 12
 VIOLATION_COLUMNS = (
     "workload_violation",
-    "carbon_violation",
     "grid_limit_violation",
     "ramp_violation",
 )
@@ -58,15 +57,12 @@ RUN_FIELDS = (
     "mip_gap",
     "decomposition_iterations",
     "active_scenario_count",
-    "carbon_cut_count",
-    "carbon_cut_violation_lower_bound",
     "nominal_grid_cost_usd",
     "nominal_bess_degradation_cost_usd",
     "nominal_operating_cost_usd",
     "actual_grid_cost_usd",
     "actual_operating_cost_usd",
     "actual_carbon_kg",
-    "carbon_budget_kg",
     "actual_curtailment_mwh",
     "training_mean_batch_adjustment_mwh",
     "validation_batch_adjustment_mwh",
@@ -119,7 +115,7 @@ def summarize_saa_runs(
     *,
     sample_sizes: tuple[int, ...] = SAA_SAMPLE_SIZES,
 ) -> list[dict[str, object]]:
-    """按 N 汇总 36 个留出伪窗口，并计算四类单侧 Wilson 上界。"""
+    """按 N 汇总 36 个留出伪窗口，并计算三类运行风险的 Wilson 上界。"""
 
     summaries: list[dict[str, object]] = []
     expected = len(HELD_OUT_FOLDS) * VALIDATION_WINDOWS_PER_FOLD
@@ -504,20 +500,16 @@ def main() -> None:
                         "mip_gap": result.mip_gap,
                         "decomposition_iterations": result.decomposition_iterations,
                         "active_scenario_count": result.active_scenario_count,
-                        "carbon_cut_count": result.carbon_cut_count,
-                        "carbon_cut_violation_lower_bound": result.carbon_cut_violation_lower_bound,
                         "nominal_grid_cost_usd": result.plan.grid_cost,
                         "nominal_bess_degradation_cost_usd": result.plan.bess_degradation_cost,
                         "nominal_operating_cost_usd": result.plan.operating_cost,
                         "actual_grid_cost_usd": replay.grid_cost,
                         "actual_operating_cost_usd": replay.operating_cost,
                         "actual_carbon_kg": replay.carbon_kg,
-                        "carbon_budget_kg": result.plan.carbon_budget_kg,
                         "actual_curtailment_mwh": sum(replay.curtailment),
                         "training_mean_batch_adjustment_mwh": result.mean_batch_adjustment_mwh,
                         "validation_batch_adjustment_mwh": replay.batch_adjustment_mwh,
                         "workload_violation": replay.workload_violation,
-                        "carbon_violation": replay.carbon_violation,
                         "grid_limit_violation": replay.grid_limit_violation,
                         "ramp_violation": replay.ramp_violation,
                     }
@@ -533,20 +525,16 @@ def main() -> None:
                         "mip_gap": result.mip_gap,
                         "decomposition_iterations": result.decomposition_iterations,
                         "active_scenario_count": result.active_scenario_count,
-                        "carbon_cut_count": result.carbon_cut_count,
-                        "carbon_cut_violation_lower_bound": result.carbon_cut_violation_lower_bound,
                         "nominal_grid_cost_usd": "",
                         "nominal_bess_degradation_cost_usd": "",
                         "nominal_operating_cost_usd": "",
                         "actual_grid_cost_usd": "",
                         "actual_operating_cost_usd": "",
                         "actual_carbon_kg": "",
-                        "carbon_budget_kg": "",
                         "actual_curtailment_mwh": "",
                         "training_mean_batch_adjustment_mwh": "",
                         "validation_batch_adjustment_mwh": "",
                         "workload_violation": True,
-                        "carbon_violation": True,
                         "grid_limit_violation": True,
                         "ramp_violation": True,
                     }

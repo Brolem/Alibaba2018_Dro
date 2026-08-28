@@ -215,6 +215,7 @@ class MainlineSchedulerTests(unittest.TestCase):
             beta_ramp=0.0,
             scenario_indices=[7],
             carbon_cuts=[impossible_cut],
+            enforce_carbon_budget=True,
         )
         self.assertFalse(cut_master.feasible)
         self.assertEqual(cut_master.carbon_cut_count, 1)
@@ -237,6 +238,7 @@ class MainlineSchedulerTests(unittest.TestCase):
             scenario_indices=[7],
             carbon_cuts=[impossible_cut],
             minimize_carbon_violations=True,
+            enforce_carbon_budget=True,
         )
         self.assertTrue(cut_diagnostic.feasible, cut_diagnostic.solver_status)
         self.assertEqual(cut_diagnostic.carbon_cut_violation_lower_bound, 1)
@@ -315,6 +317,7 @@ class MainlineSchedulerTests(unittest.TestCase):
             pv_capacity_mw=0.0,
             wind_capacity_mw=0.0,
             carbon_budget_reduction=0.5,
+            enforce_carbon_budget=True,
         )
 
         self.assertTrue(result.feasible)
@@ -325,6 +328,28 @@ class MainlineSchedulerTests(unittest.TestCase):
             result.forecast_carbon_kg,
             result.carbon_budget_kg + 1e-6,
         )
+
+    def test_current_mainline_does_not_use_carbon_budget_for_dispatch(self) -> None:
+        inputs = [
+            _input(0, price=10.0, forecast_carbon=1.0, batch_baseline=1.0, batch_window=1.0),
+            _input(1, price=20.0, forecast_carbon=0.0, batch_baseline=0.0, batch_window=1.0),
+        ]
+        result = scheduler.solve_wind_solar_storage(
+            inputs,
+            g_max_mw=2.0,
+            r_max_mw=2.0,
+            p_grid_initial_mw=0.0,
+            bess_power_mw=0.0,
+            bess_energy_mwh=0.0,
+            pv_capacity_mw=0.0,
+            wind_capacity_mw=0.0,
+            carbon_budget_reduction=0.5,
+        )
+
+        self.assertTrue(result.feasible)
+        self.assertAlmostEqual(result.batch[0], 1.0, places=6)
+        self.assertAlmostEqual(result.batch[1], 0.0, places=6)
+        self.assertGreater(result.forecast_carbon_kg, result.carbon_budget_kg)
 
     def test_actual_replay_uses_actual_wind_and_solar_and_reports_violation(self) -> None:
         inputs = [

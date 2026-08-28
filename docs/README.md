@@ -37,7 +37,7 @@ flowchart LR
     WM --> UNC
     UNC --> LOAD["scenarios.py → ScenarioRealization"]
     UNC --> BUILD["inputs.py → HourlyInput"]
-    LOAD --> DSAA["scheduler.py → 分解 SAA / 场景回放 / 碳 LP 割"]
+    LOAD --> DSAA["scheduler.py → 分解 SAA / 三类运行风险场景回放"]
     BUILD --> DSAA
     DSAA --> URES["run_config.json / saa_cv_runs.csv / summary / selection"]
 ```
@@ -55,7 +55,7 @@ flowchart LR
 | 7. 模型输入 | `inputs.build_hourly_input` 或 `build_hourly_input_from_rows` | 能源窗口、名义 workload、容量统计 | 每小时 `HourlyInput` |
 | 8. 场景重建 | `scenarios.load_saa_scenarios` | manifest、校准表、workload 源日 | 联合 `ScenarioRealization` 序列 |
 | 9. 确定性实验 | `run_four_windows.py` → `scheduler.solve_wind_solar_storage` → `replay_actual_wind_solar` | `HourlyInput` | 确定性日前计划与实际回放结果 |
-| 10. SAA 实验 | `run_uncertainty_methods.py` → `solve_decomposed_saa_wind_solar_storage` | `HourlyInput` + 联合场景 | 活动场景主问题、全场景回放、碳对偶割 |
+| 10. SAA 实验 | `run_uncertainty_methods.py` → `solve_decomposed_saa_wind_solar_storage` | `HourlyInput` + 联合场景 | 活动场景主问题、全场景回放与三类运行风险 |
 | 11. 校准选择 | `summarize_saa_runs` → `select_saa_sample_size` | 每窗口结果 CSV | Wilson 上界、汇总表和样本量选择 JSON |
 
 定位问题时从结果文件的 `run_config.json` 和 manifest 哈希反向追踪：结果目录 → 运行脚本 → `inputs.py`/`scenarios.py` → processed 数据 → 对应准备脚本 → raw 数据。不要直接手工修改中间 CSV 来修正模型结果。
@@ -64,14 +64,14 @@ flowchart LR
 
 | 文件 | 用途 |
 | --- | --- |
-| `../alibaba2018_dro/config.py` | 公共实验参数、资源容量、碳预算和时间窗口常量 |
+| `../alibaba2018_dro/config.py` | 公共实验参数、资源容量和时间窗口常量；碳预算常量仅供历史诊断复现 |
 | `../alibaba2018_dro/eia_history.py` | 读取 EIA-930 与 ERCOT DAM 历史数据 |
 | `../alibaba2018_dro/forecasting.py` | 带 48 小时保护的能源预测模型 |
 | `../alibaba2018_dro/energy.py` | 构造年度能源表与论文窗口输入 |
 | `../alibaba2018_dro/inputs.py` | 把能源、容量和 workload 包络对齐为小时模型输入 |
 | `../alibaba2018_dro/residuals.py` | 生成风、光、碳联合残差日块与季节折 |
 | `../alibaba2018_dro/scenarios.py` | 读取 manifest 并重建 SAA 训练、验证和回放场景 |
-| `../alibaba2018_dro/scheduler.py` | 确定性/SAA 日前优化、场景追索、对偶割与实际回放 |
+| `../alibaba2018_dro/scheduler.py` | 确定性/SAA 日前优化、三类运行风险追索与实际回放；碳排放事后核算 |
 
 更详细的数据流见 `../alibaba2018_dro/README.md`。`scheduler.py` 使用 PySCIPOpt；碳排放 LP 对偶割另外使用 SciPy/HiGHS。
 
@@ -117,7 +117,7 @@ flowchart LR
 | --- | --- | --- |
 | `../README.md` | 已确认研究主线、数据边界、实验设计与当前实现状态 | 所有人 |
 | `design.md` | 目标模型的实现边界、数据接口与迁移顺序 | 复现 / 维护 |
-| `model.md` | 风光储、碳预算、有效回放容量和联合不确定性的目标公式 | 写论文 / 实现 |
+| `model.md` | 成本目标、风光储、有效回放容量和联合不确定性的数学公式 | 写论文 / 实现 |
 | `implementation_log.md` | 每次代码实现、执行命令、失败原因、改进措施与验证证据 | 复现 / 维护 |
 | `results.md` | 旧 PV+BESS 开发原型结果档案，不是主线论文结果 | 回归对照 |
 | `paper_tables_figures.md` | 主线完成后应生成的论文图表与统一报告口径 | 写论文 |

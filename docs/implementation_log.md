@@ -49,3 +49,12 @@ conda run --no-capture-output -n scip_env python -m unittest tests.test_mainline
 - 首次下界诊断执行在 `data/results/calibration/saa_carbon_cut_lower_bound_preflight/`，小恢复模型 36 秒判定不可行；诊断阶段因目标只含违约二进制量，出现 1 小时同时充放并被互补性审计拒绝，未生成结果 CSV。改进为无任意权重的两阶段词典序：先固定最小违约数，再以原运行成本（含 BESS 吞吐衰减成本）整理日前计划。
 - 最终证据位于 `data/results/calibration/saa_carbon_cut_lower_bound_lexicographic_preflight/`：第 1 轮主问题 76 秒最优，回放为 workload `0/20`、carbon `11/20`、grid `0/20`、ramp `0/20`；`2/20` 恢复模型 34 秒判定不可行；两阶段诊断 93 秒最优，得到 `carbon_cut_violation_lower_bound=6`。
 - 结论：当前割是场景最小碳值函数的支撑下界，割松弛仍至少需要 `6/20` 个碳违约场景，因此正式允许的 `2/20` 无法满足。完整三折 SAA 校准继续暂停；下一步必须在碳预算收紧率、碳可靠性目标或资产配置之间做显式研究设计选择，不能把求解失败误判为继续加时即可解决。
+
+## 2026-08-28：主目标转为成本与运行可靠性
+
+- 研究目标改为联合算力、风电和光伏不确定性下的调度相关运行成本最小化，并控制算力包络、并网容量和爬坡三类运行风险。
+- `scheduler.py` 的确定性和 SAA 求解默认不再添加预测碳预算、场景碳机会约束或碳割；场景追索只优先处理并网和爬坡风险，碳排放由最终购电量事后核算。
+- 历史碳预算/碳割代码仅由 `enforce_carbon_budget=True` 显式启用，用于复现此前不可行性诊断，不属于当前论文主流程。
+- `run_four_windows.py` 移除碳预算收紧率循环和碳违约字段；`run_uncertainty_methods.py` 的样本量选择只使用算力包络、并网和爬坡三类 Wilson 上界，同时继续保存实际碳排放。
+- 删除未提交的五个自适应碳预算边界搜索目录；此前已提交的碳割诊断结果作为历史证据保留。
+- 本次不启动完整 SAA 校准或四窗口长实验。下一步是在新口径下运行单折单窗口 SAA 短预检。
