@@ -19,7 +19,6 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from alibaba2018_dro.config import (
     BESS_DEGRADATION_COST_USD_PER_MWH_THROUGHPUT,
-    DEFAULT_CARBON_BUDGET_REDUCTION,
     EFFECTIVE_REPLAY_CAPACITY_FRACTION,
     PV_CAPACITY_FRACTION_OF_MUST_LOAD,
     WIND_CAPACITY_FRACTION_OF_MUST_LOAD,
@@ -46,6 +45,11 @@ VIOLATION_COLUMNS = (
     "grid_limit_violation",
     "ramp_violation",
 )
+VIOLATION_MAGNITUDE_COLUMNS = {
+    "workload_violation": "workload_envelope_violation_mwh",
+    "grid_limit_violation": "grid_limit_violation_mw",
+    "ramp_violation": "ramp_violation_mw",
+}
 RUN_FIELDS = (
     "method",
     "held_out_fold",
@@ -66,6 +70,9 @@ RUN_FIELDS = (
     "actual_curtailment_mwh",
     "training_mean_batch_adjustment_mwh",
     "validation_batch_adjustment_mwh",
+    "workload_envelope_violation_mwh",
+    "grid_limit_violation_mw",
+    "ramp_violation_mw",
     *VIOLATION_COLUMNS,
 )
 
@@ -162,6 +169,16 @@ def summarize_saa_runs(
             summary[f"{prefix}_violation_count"] = violations
             summary[f"{prefix}_violation_rate"] = rate
             summary[f"{prefix}_wilson_upper_95"] = upper
+            magnitudes = [
+                float(row.get(VIOLATION_MAGNITUDE_COLUMNS[column], 0.0) or 0.0)
+                for row in feasible_rows
+            ]
+            summary[f"{prefix}_mean_violation_magnitude"] = (
+                statistics.fmean(magnitudes) if magnitudes else None
+            )
+            summary[f"{prefix}_max_violation_magnitude"] = (
+                max(magnitudes) if magnitudes else None
+            )
             upper_bounds.append(upper)
         summary["max_wilson_upper_95"] = max(upper_bounds)
         summary["meets_90pct_target"] = (
@@ -472,7 +489,6 @@ def main() -> None:
                     bess_energy_mwh=bess_energy_mwh,
                     pv_capacity_mw=pv_capacity_mw,
                     wind_capacity_mw=wind_capacity_mw,
-                    carbon_budget_reduction=DEFAULT_CARBON_BUDGET_REDUCTION,
                     time_limit_seconds=args.time_limit_seconds,
                     max_iterations=args.decomposition_max_iterations,
                     display_progress=True,
@@ -509,6 +525,9 @@ def main() -> None:
                         "actual_curtailment_mwh": sum(replay.curtailment),
                         "training_mean_batch_adjustment_mwh": result.mean_batch_adjustment_mwh,
                         "validation_batch_adjustment_mwh": replay.batch_adjustment_mwh,
+                        "workload_envelope_violation_mwh": replay.workload_envelope_violation_mwh,
+                        "grid_limit_violation_mw": replay.grid_limit_violation_mw,
+                        "ramp_violation_mw": replay.ramp_violation_mw,
                         "workload_violation": replay.workload_violation,
                         "grid_limit_violation": replay.grid_limit_violation,
                         "ramp_violation": replay.ramp_violation,
@@ -534,6 +553,9 @@ def main() -> None:
                         "actual_curtailment_mwh": "",
                         "training_mean_batch_adjustment_mwh": "",
                         "validation_batch_adjustment_mwh": "",
+                        "workload_envelope_violation_mwh": "",
+                        "grid_limit_violation_mw": "",
+                        "ramp_violation_mw": "",
                         "workload_violation": True,
                         "grid_limit_violation": True,
                         "ramp_violation": True,

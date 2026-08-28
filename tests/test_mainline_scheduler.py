@@ -49,7 +49,7 @@ def _input(
 
 
 class MainlineConfigTests(unittest.TestCase):
-    def test_all_methods_share_declared_carbon_budget_set(self) -> None:
+    def test_historical_carbon_grid_stays_reproducible(self) -> None:
         self.assertEqual(CARBON_BUDGET_REDUCTIONS, (0.000, 0.025, 0.050))
         self.assertEqual(DEFAULT_CARBON_BUDGET_REDUCTION, 0.025)
 
@@ -149,6 +149,23 @@ class MainlineSchedulerTests(unittest.TestCase):
         self.assertEqual(decomposed.decomposition_iterations, 1)
         self.assertEqual(decomposed.active_scenario_count, 1)
         self.assertEqual(decomposed.scenario_count, 1)
+
+        impossible_scenario = replace(
+            scenario,
+            cumulative_due_core_hours=(2.0, 2.0),
+        )
+        violated = scheduler.replay_joint_scenario_with_batch_recourse(
+            inputs,
+            result.plan,
+            impossible_scenario,
+            pv_capacity_mw=0.0,
+            wind_capacity_mw=0.0,
+            g_max_mw=2.0,
+            r_max_mw=2.0,
+            p_grid_initial_mw=0.0,
+        )
+        self.assertTrue(violated.workload_violation)
+        self.assertGreater(violated.workload_envelope_violation_mwh, 0.0)
 
         carbon_lp = scheduler.solve_carbon_recourse_subproblem(
             inputs,

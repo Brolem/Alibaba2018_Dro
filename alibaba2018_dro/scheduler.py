@@ -106,6 +106,9 @@ class ScenarioReplayResult:
     grid_cost: float
     operating_cost: float
     carbon_kg: float
+    workload_envelope_violation_mwh: float
+    grid_limit_violation_mw: float
+    ramp_violation_mw: float
     workload_violation: bool
     carbon_violation: bool
     grid_limit_violation: bool
@@ -1087,23 +1090,33 @@ def replay_joint_scenario(
     grid_cost = sum(price * value for price, value in zip(prices, grid, strict=True))
 
     cumulative = 0.0
-    workload_violation = False
+    workload_envelope_violation_mwh = 0.0
     for t, value in enumerate(plan.batch):
         cumulative += value
         arrived = scenario.cumulative_arrived_core_hours[t] * workload_conversion
         due = scenario.cumulative_due_core_hours[t] * workload_conversion
-        if cumulative > arrived + tolerance or cumulative < due - tolerance:
-            workload_violation = True
-            break
-    grid_limit_violation = any(value > g_max_mw + tolerance for value in grid)
-    ramp_violation = any(
-        abs(value - previous) > r_max_mw + tolerance
-        for value, previous in zip(
-            grid,
-            [p_grid_initial_mw, *grid[:-1]],
-            strict=True,
+        workload_envelope_violation_mwh = max(
+            workload_envelope_violation_mwh,
+            cumulative - arrived,
+            due - cumulative,
         )
+    grid_limit_violation_mw = max(
+        0.0, max(grid, default=0.0) - g_max_mw
     )
+    ramp_violation_mw = max(
+        [
+            abs(value - previous) - r_max_mw
+            for value, previous in zip(
+                grid,
+                [p_grid_initial_mw, *grid[:-1]],
+                strict=True,
+            )
+        ],
+        default=0.0,
+    )
+    workload_violation = workload_envelope_violation_mwh > tolerance
+    grid_limit_violation = grid_limit_violation_mw > tolerance
+    ramp_violation = ramp_violation_mw > tolerance
     return ScenarioReplayResult(
         batch=list(plan.batch),
         batch_adjustment_mwh=0.0,
@@ -1112,6 +1125,9 @@ def replay_joint_scenario(
         grid_cost=grid_cost,
         operating_cost=grid_cost + plan.bess_degradation_cost,
         carbon_kg=carbon_kg,
+        workload_envelope_violation_mwh=workload_envelope_violation_mwh,
+        grid_limit_violation_mw=grid_limit_violation_mw,
+        ramp_violation_mw=ramp_violation_mw,
         workload_violation=workload_violation,
         carbon_violation=carbon_kg > plan.carbon_budget_kg + tolerance,
         grid_limit_violation=grid_limit_violation,
@@ -1213,10 +1229,12 @@ def replay_joint_scenario_with_batch_recourse(
         t: model.addVar(lb=0.0, ub=pv[t] + wind[t], name=f"curtailment_{t}")
         for t in range(hours)
     }
+    violation_workload = model.addVar(vtype="B", name="violate_workload")
     violation_grid = model.addVar(vtype="B", name="violate_grid")
     violation_ramp = model.addVar(vtype="B", name="violate_ramp")
     deviations: list[object] = []
     cumulative_batch = 0.0
+    workload_big_m = max(sum(plan.batch), 1.0)
     p_must = inputs[0].online_mw + inputs[0].base_mw
     previous_grid: object = p_grid_initial_mw
     for t in range(hours):
@@ -1230,10 +1248,12 @@ def replay_joint_scenario_with_batch_recourse(
         model.addCons(
             cumulative_batch
             <= scenario.cumulative_arrived_core_hours[t] * workload_conversion
+            + workload_big_m * violation_workload
         )
         model.addCons(
             cumulative_batch
             >= scenario.cumulative_due_core_hours[t] * workload_conversion
+            - workload_big_m * violation_workload
         )
         model.addCons(
             grid[t]
@@ -1267,7 +1287,7 @@ def replay_joint_scenario_with_batch_recourse(
         )
         for t in range(hours)
     ]
-    total_risk_violations = violation_grid + violation_ramp
+    total_risk_violations = violation_workload + violation_grid + violation_ramp
     model.setObjective(total_risk_violations, "minimize")
     model.optimize()
     if model.getStatus() != "optimal":
@@ -1275,12 +1295,14 @@ def replay_joint_scenario_with_batch_recourse(
             f"batch recourse risk stage is {model.getStatus()}"
         )
     selected_risk = (
+        round(model.getVal(violation_workload)),
         round(model.getVal(violation_grid)),
         round(model.getVal(violation_ramp)),
     )
     model.freeTransform()
-    model.addCons(violation_grid == selected_risk[0])
-    model.addCons(violation_ramp == selected_risk[1])
+    model.addCons(violation_workload == selected_risk[0])
+    model.addCons(violation_grid == selected_risk[1])
+    model.addCons(violation_ramp == selected_risk[2])
     total_deviation = sum(deviations)
     model.setObjective(total_deviation, "minimize")
     model.optimize()
@@ -1318,6 +1340,31 @@ def replay_joint_scenario_with_batch_recourse(
             strict=True,
         )
     )
+    cumulative = 0.0
+    workload_envelope_violation_mwh = 0.0
+    for t, value in enumerate(batch_values):
+        cumulative += value
+        arrived = scenario.cumulative_arrived_core_hours[t] * workload_conversion
+        due = scenario.cumulative_due_core_hours[t] * workload_conversion
+        workload_envelope_violation_mwh = max(
+            workload_envelope_violation_mwh,
+            cumulative - arrived,
+            due - cumulative,
+        )
+    grid_limit_violation_mw = max(
+        0.0, max(grid_values, default=0.0) - g_max_mw
+    )
+    ramp_violation_mw = max(
+        [
+            abs(value - previous) - r_max_mw
+            for value, previous in zip(
+                grid_values,
+                [p_grid_initial_mw, *grid_values[:-1]],
+                strict=True,
+            )
+        ],
+        default=0.0,
+    )
     return ScenarioReplayResult(
         batch=batch_values,
         batch_adjustment_mwh=sum(
@@ -1329,7 +1376,10 @@ def replay_joint_scenario_with_batch_recourse(
         grid_cost=grid_cost,
         operating_cost=grid_cost + plan.bess_degradation_cost,
         carbon_kg=carbon_kg,
-        workload_violation=False,
+        workload_envelope_violation_mwh=workload_envelope_violation_mwh,
+        grid_limit_violation_mw=grid_limit_violation_mw,
+        ramp_violation_mw=ramp_violation_mw,
+        workload_violation=workload_envelope_violation_mwh > tolerance,
         carbon_violation=False,
         grid_limit_violation=grid_limit_violation,
         ramp_violation=ramp_violation,
