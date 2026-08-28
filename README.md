@@ -136,6 +136,7 @@ c_{\mathrm{deg}}
 - [docs/design.md](docs/design.md)：实现边界、数据接口与待实现任务。
 - [docs/implementation_log.md](docs/implementation_log.md)：逐次实现、执行命令、失败原因与验证证据。
 - [docs/model.md](docs/model.md)：成本目标、三类运行可靠性与联合不确定集。
+- [docs/compute_envelope.md](docs/compute_envelope.md)：算力包络、有效容量、单位转换及代码数据流的完整推导。
 - [docs/forecasting.md](docs/forecasting.md)：无泄漏预测、实际回放和残差标定口径。
 - [docs/data_feasibility.md](docs/data_feasibility.md)：Alibaba v2018/GPU v2020 可行性、7日训练场景池与30天公共测试实例的边界。
 - [docs/results.md](docs/results.md)：现有 PV+BESS 开发原型结果档案。

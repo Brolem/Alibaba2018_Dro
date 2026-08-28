@@ -8,22 +8,23 @@
 
 ### 1.1 决策变量
 
-- $u_t$：批处理执行量（core 或经固定映射后的 MW）；
+- $b_t$：本小时批处理平均占用核数；$u_t=\gamma b_t$：调度器实际使用的批处理功率（MW）；
 - $g_t$：电网购电功率；
 - $x_t^{ch},x_t^{dis}$：BESS 充、放电功率；$e_t$：BESS 能量；
 - $z_t^{PV},z_t^{W}$：光伏、风电弃电功率。
 
 ### 1.2 主要参数
 
-- $l_t^{on}$：在线刚性负荷；$a_t$：本小时到达的批处理工作量；$A_t,D_t$：累计已到达与累计到期工作量；$U_t$：本小时仍在柔性窗口内的工作量上界；
+- $o^{raw}$、$o$：容量闭合前、后的在线静态预留核数；$l^{on}=\gamma o$：在线刚性负荷功率；
+- $a_t$：本小时释放的批处理工作量；$A_t,D_t$：累计已释放与累计到期工作量；$U_t^{win}$：本小时仍在柔性窗口内的工作量；
 - $p_t$：日前电价；$\hat c_t$、$c_t^{act}$：预测与实际消费侧碳强度；
 - $\hat P_t^{PV}$、$\hat P_t^{W}$：预测本地光伏、风电可用出力；
 - $G^{max}$、$R^{max}$：并网功率与爬坡上限；
-- $C^{eff}$：有效回放容量；
+- $C^{physical}$、$C^{eff}$：物理核数与有效回放核数；$\kappa$：有效容量比例；$s^{cap}$：统一容量闭合缩放系数；
 - $P^{BESS}$、$E^{BESS}$、$\eta^{ch}$、$\eta^{dis}$：储能参数；
 - $c_{deg}$：按累计充、放电总吞吐量计的 BESS 衰减成本（USD/MWh）。
 
-在线和批处理若先以核数建模，再通过统一固定功率映射进入功率平衡；两种单位不得在同一个约束中混用。
+$\gamma$ 是单核计算功率到设施功率的固定映射，单位为 MW/core。在线和批处理先在核数/core-hour 域形成容量与累计包络，再统一映射为 MW/MWh 进入调度器；两种单位不得在同一个约束中混用。
 
 ## 2. 确定性日前模型
 
@@ -43,6 +44,10 @@ $\hat S_t,\hat W_t$ 分别是 ERCO 系统太阳能和风电的日前预测。它
 令 $P_t^{IT}(u_t)$ 表示在线负载、基座功率和批处理执行量对应的设施总负载。则
 
 \[
+P_t^{IT}(u_t)=P^{base}+l^{on}+u_t,
+\]
+
+\[
 g_t+(\hat P_t^{PV}-z_t^{PV})+(\hat P_t^W-z_t^W)+x_t^{dis}
 =P_t^{IT}(u_t)+x_t^{ch},\qquad \forall t,
 \]
@@ -56,29 +61,23 @@ g_t+(\hat P_t^{PV}-z_t^{PV})+(\hat P_t^W-z_t^W)+x_t^{dis}
 
 ### 2.3 聚合工作量、柔性包络与有效回放容量
 
+完整数据来源、包络推导、容量闭合、单位转换和代码数据流见 [compute_envelope.md](compute_envelope.md)。本模型只保留最终约束：
+
 \[
-w_i=n_i\frac{c_i}{100}\frac{\max(e_i-s_i,0)}{3600},
+D_t\le\sum_{\tau=1}^{t}b_\tau\Delta t\le A_t,
 \qquad
-a_t=\sum_{i:\lfloor s_i/3600\rfloor=t}w_i,
+0\le b_t\Delta t\le U_t^{win},
 \]
 
 \[
-A_t=\sum_{\tau=1}^{t}a_\tau,
+C^{eff}=\kappa C^{physical},
 \qquad
-D_t=\sum_{\tau:\,\tau+H\le t}a_\tau,
+o+b_t\le C^{eff},
+\qquad
+u_t=\gamma b_t.
 \]
 
-\[
-D_t\le\sum_{\tau=1}^{t}E^{ba}(u_\tau)\le A_t,
-\qquad 0\le u_t\le U_t,
-\]
-
-\[
-l_t^{on}+u_t\le C^{eff},\qquad
-C^{eff}=\kappa C^{physical},\quad \kappa\in\{0.6,0.7,0.8\}.
-\]
-
-$w_i$ 以 core-hour 计；任务观测持续时间只用于计算工作量。$H$ 是与工作量分离的最大可延迟窗口，主情景为 6 h，敏感性为 $H\in\{2,6,12,24\}$ h。它不是由持续时间放大或 `slack_ratio` 推导的真实 SLA。累计上界禁止任务在到达前执行，累计下界要求任务在反事实窗口内完成；有限窗口末端将到期时刻截断到 $T$，故 $A_T=D_T$，总工作量守恒。$C^{eff}$ 是为解决计划/预留负荷与物理容量不闭合而设的情景容量，不是实测利用率。
+在线业务 $o$ 是固定的不可调参数，故代码将共享容量约束等价写为 $u_t\le\gamma(C^{eff}-o)$。这只是消去固定参数后的形式，不表示只有批处理受有效容量约束。累计上下包络、在线负载和批处理量在进入调度器前使用同一个容量闭合尺度。
 
 ### 2.4 储能、并网与爬坡
 
