@@ -1569,6 +1569,7 @@ def solve_decomposed_saa_wind_solar_storage(
     pv_capacity_mw: float,
     wind_capacity_mw: float,
     carbon_budget_reduction: float = DEFAULT_CARBON_BUDGET_REDUCTION,
+    enforce_carbon_budget: bool = False,
     beta_workload: float = 0.10,
     beta_carbon: float = 0.10,
     beta_grid: float = 0.10,
@@ -1601,10 +1602,11 @@ def solve_decomposed_saa_wind_solar_storage(
     total_scenarios = len(scenarios)
     allowed = {
         "workload": math.floor(beta_workload * total_scenarios + 1e-9),
-        "carbon": math.floor(beta_carbon * total_scenarios + 1e-9),
         "grid": math.floor(beta_grid * total_scenarios + 1e-9),
         "ramp": math.floor(beta_ramp * total_scenarios + 1e-9),
     }
+    if enforce_carbon_budget:
+        allowed["carbon"] = math.floor(beta_carbon * total_scenarios + 1e-9)
     initial_count = min(total_scenarios, max(allowed.values()) + 1)
     active_indices = set(range(max(1, initial_count)))
     started = time.perf_counter()
@@ -1635,6 +1637,7 @@ def solve_decomposed_saa_wind_solar_storage(
             pv_capacity_mw=pv_capacity_mw,
             wind_capacity_mw=wind_capacity_mw,
             carbon_budget_reduction=carbon_budget_reduction,
+            enforce_carbon_budget=enforce_carbon_budget,
             beta_workload=beta_workload,
             beta_carbon=beta_carbon,
             beta_grid=beta_grid,
@@ -1743,7 +1746,10 @@ def solve_decomposed_saa_wind_solar_storage(
             )
 
         cuts_added = 0
-        if len(violations["carbon"]) > allowed["carbon"]:
+        if (
+            enforce_carbon_budget
+            and len(violations["carbon"]) > allowed["carbon"]
+        ):
             for scenario_index in violations["carbon"]:
                 subproblem = solve_carbon_recourse_subproblem(
                     inputs,
@@ -1829,6 +1835,7 @@ def solve_decomposed_saa_wind_solar_storage(
                 pv_capacity_mw=pv_capacity_mw,
                 wind_capacity_mw=wind_capacity_mw,
                 carbon_budget_reduction=carbon_budget_reduction,
+                enforce_carbon_budget=enforce_carbon_budget,
                 beta_workload=0.0,
                 beta_carbon=0.0,
                 beta_grid=0.0,
@@ -1870,6 +1877,7 @@ def solve_decomposed_saa_wind_solar_storage(
                 pv_capacity_mw=pv_capacity_mw,
                 wind_capacity_mw=wind_capacity_mw,
                 carbon_budget_reduction=carbon_budget_reduction,
+                enforce_carbon_budget=enforce_carbon_budget,
                 beta_workload=beta_workload,
                 beta_carbon=beta_carbon,
                 beta_grid=beta_grid,
@@ -1911,6 +1919,7 @@ def solve_decomposed_saa_wind_solar_storage(
                     pv_capacity_mw=pv_capacity_mw,
                     wind_capacity_mw=wind_capacity_mw,
                     carbon_budget_reduction=carbon_budget_reduction,
+                    enforce_carbon_budget=enforce_carbon_budget,
                     beta_workload=beta_workload,
                     beta_carbon=1.0,
                     beta_grid=beta_grid,

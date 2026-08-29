@@ -126,9 +126,13 @@ class MainlineSchedulerTests(unittest.TestCase):
         self.assertFalse(replay.grid_limit_violation)
         self.assertFalse(replay.ramp_violation)
 
+        carbon_stressed_scenario = replace(
+            scenario,
+            residual_carbon_lbs_per_kwh=(10.0, 10.0),
+        )
         decomposed = scheduler.solve_decomposed_saa_wind_solar_storage(
             inputs,
-            [scenario],
+            [carbon_stressed_scenario],
             g_max_mw=2.0,
             r_max_mw=2.0,
             p_grid_initial_mw=0.0,
@@ -136,7 +140,7 @@ class MainlineSchedulerTests(unittest.TestCase):
             bess_energy_mwh=0.0,
             pv_capacity_mw=0.0,
             wind_capacity_mw=0.0,
-            carbon_budget_reduction=0.0,
+            carbon_budget_reduction=0.5,
             beta_workload=0.0,
             beta_carbon=0.0,
             beta_grid=0.0,
@@ -149,6 +153,18 @@ class MainlineSchedulerTests(unittest.TestCase):
         self.assertEqual(decomposed.decomposition_iterations, 1)
         self.assertEqual(decomposed.active_scenario_count, 1)
         self.assertEqual(decomposed.scenario_count, 1)
+        stressed_replay = scheduler.replay_joint_scenario_with_batch_recourse(
+            inputs,
+            decomposed.plan,
+            carbon_stressed_scenario,
+            pv_capacity_mw=0.0,
+            wind_capacity_mw=0.0,
+            g_max_mw=2.0,
+            r_max_mw=2.0,
+            p_grid_initial_mw=0.0,
+        )
+        self.assertGreater(stressed_replay.carbon_kg, decomposed.plan.carbon_budget_kg)
+        self.assertFalse(stressed_replay.carbon_violation)
 
         impossible_scenario = replace(
             scenario,

@@ -213,7 +213,7 @@ def select_saa_sample_size(
             "selected_sample_size": int(chosen["sample_size"]),
             "target_achieved": True,
             "selection_rule": (
-                "all four one-sided 95% Wilson upper bounds <= 0.10; "
+                "all three one-sided 95% Wilson upper bounds <= 0.10; "
                 "minimum mean nominal cost; <=0.1% cost tie selects smaller N"
             ),
             "selected_max_wilson_upper_95": chosen["max_wilson_upper_95"],
@@ -247,7 +247,7 @@ def select_saa_sample_size(
         "target_achieved": False,
         "selection_rule": (
             "2024 calibration target not achieved; minimize the largest of the "
-            "four one-sided 95% Wilson upper bounds"
+            "three one-sided 95% Wilson upper bounds"
         ),
         "selected_max_wilson_upper_95": chosen["max_wilson_upper_95"],
         "selected_mean_nominal_operating_cost_usd": chosen[
@@ -296,11 +296,10 @@ def _run_config(
         "schema_version": 2,
         "method": "SAA",
         "protocol": "2024_three_fold_12_pseudo_windows_v1",
-        "decomposition": "active_scenarios_with_scipy_highs_carbon_dual_cuts",
+        "decomposition": "active_scenarios_with_scipy_highs_three_risk_replay",
         "parameters": {
             "beta": 0.10,
             "wilson_confidence_one_sided": 0.95,
-            "carbon_budget_reduction": DEFAULT_CARBON_BUDGET_REDUCTION,
             "effective_capacity_fraction": EFFECTIVE_REPLAY_CAPACITY_FRACTION,
             "bess_degradation_cost_usd_per_mwh_throughput": (
                 BESS_DEGRADATION_COST_USD_PER_MWH_THROUGHPUT

@@ -18,15 +18,15 @@
 ## processed/（处理后/派生输入）
 
 - `energy/`：共享 2025 年度表 `ercot_2025_houston_hourly.csv`，以及四个 1062 小时无泄漏窗口与 `inputs_manifest.json`。
-- `workload/`：算力侧派生结果——逐日审计、原始 8 天聚合、所有方法共用的 30 天名义负荷及其生成清单；训练场景仅在 SAA/RO/DRO 样本数经收敛确定后生成。
+- `workload/`：逐日审计、原始 8 天聚合、公共 30 天名义负荷及其生成清单。
+- `scenarios/`：2024 校准日块、输入清单及训练/验证/回放场景 manifest；用于按需重建嵌套场景，不手工修改。
 
 这些是调度器的直接输入，纳入版本控制以保证复现。
 
 ## results/（实验结果）
 
-- `four_windows_summary.csv`：四窗口确定性结果（成本/碳/尖峰/爬坡/PV 自用率）。
-- `baseline_comparison.csv`：确定性 vs 逐小时鲁棒 vs SAA 的对照。
-- `baseline_backtest_four_windows.csv`：四窗口对照基线的样本外 PV 越限率。
-- `backtest_results.json`：名义/鲁棒方案随 Γ 的违约率—收益折中。
+- `four_windows_mainline_summary.csv`：目标切换前的确定性历史结果，待按当前三风险口径重跑。
+- `calibration/`：当前 SAA 三风险预检及三折校准检查点；已停止的碳预算诊断结果已删除。
+- 其余 `four_windows_summary.csv`、`baseline_*` 和 `backtest_results.json`：旧 PV+BESS 原型档案。
 
 复现命令见 `data/results/README.md`。

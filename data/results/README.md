@@ -14,14 +14,10 @@
 
 | 目录 | 用途与结论 |
 | --- | --- |
-| `saa_decomposed_restore_preflight/` | 活动场景、恢复与并行回放基线；碳违反保持 `11/20` |
-| `saa_carbon_dual_cuts_preflight/` | 首版碳 LP 割；第 2 轮 120 秒无 incumbent |
-| `saa_carbon_tight_cuts_preflight/` | 收紧 Big-M 并延长到 300 秒；第 2 轮仍无 incumbent |
-| `saa_carbon_cut_restore_preflight/` | 碳割恢复 38 秒不可行，完整第 2 轮 269 秒不可行 |
-| `saa_carbon_cut_lower_bound_preflight/` | 首次下界诊断因互补性审计停止；只有配置文件，不是结果 |
-| `saa_carbon_cut_lower_bound_lexicographic_preflight/` | 两阶段诊断正式证据：最小碳违约下界为 `6/20` |
+| `saa_three_risk_preflight/` | 当前三风险主线预检；`fold_1/window=0/N=20` 最优，训练及验证的算力包络、并网、爬坡均无实质违反 |
+| `saa_three_fold/` | 当前三折正式运行目录；逐组合保存检查点，全部 144 个组合完成后生成汇总和样本量选择 |
 
-这些目录是已停止的碳预算算法诊断档案，不是当前主线、完整三折校准或论文方法比较结果。每个目录的 `run_config.json` 固定输入哈希和求解参数；逐次失败分析见 `docs/implementation_log.md`。
+当前只保留三风险 SAA 主线结果。八个已停止的碳预算/碳割预检目录已于 2026-08-29 删除；失败原因的文字摘要保留在 `docs/implementation_log.md`，需要时可从 Git 历史恢复原始文件。每个现行目录的 `run_config.json` 固定输入哈希和求解参数。
 
 `operating_cost_usd` 与 `actual_operating_cost_usd` 仅含购电成本和 BESS 吞吐衰减成本；风光与储能固定运维成本及年化投资成本不在该 CSV 中。主比较固定资产配置，故这些成本为各方法相同常数，也不参与 `cost_reduction`。
 

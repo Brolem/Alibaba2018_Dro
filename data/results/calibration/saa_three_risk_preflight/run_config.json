@@ -1,11 +1,10 @@
 {
-  "decomposition": "active_scenarios_with_scipy_highs_carbon_dual_cuts",
+  "decomposition": "active_scenarios_with_scipy_highs_three_risk_replay",
   "method": "SAA",
   "parameters": {
     "bess_degradation_cost_usd_per_mwh_throughput": 20.0,
     "beta": 0.1,
-    "carbon_budget_reduction": 0.025,
-    "decomposition_max_iterations": 2,
+    "decomposition_max_iterations": 3,
     "effective_capacity_fraction": 0.7,
     "replay_workers": 4,
     "time_limit_seconds_per_solve": 300.0,
