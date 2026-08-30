@@ -165,6 +165,40 @@ class MainlineSchedulerTests(unittest.TestCase):
         )
         self.assertGreater(stressed_replay.carbon_kg, decomposed.plan.carbon_budget_kg)
         self.assertFalse(stressed_replay.carbon_violation)
+        if scheduler.gp is not None:
+            gurobi_replay = scheduler.replay_joint_scenario_with_batch_recourse(
+                inputs,
+                decomposed.plan,
+                carbon_stressed_scenario,
+                pv_capacity_mw=0.0,
+                wind_capacity_mw=0.0,
+                g_max_mw=2.0,
+                r_max_mw=2.0,
+                p_grid_initial_mw=0.0,
+                recourse_solver="gurobi",
+            )
+            self.assertEqual(
+                (
+                    gurobi_replay.workload_violation,
+                    gurobi_replay.grid_limit_violation,
+                    gurobi_replay.ramp_violation,
+                ),
+                (
+                    stressed_replay.workload_violation,
+                    stressed_replay.grid_limit_violation,
+                    stressed_replay.ramp_violation,
+                ),
+            )
+            self.assertAlmostEqual(
+                gurobi_replay.batch_adjustment_mwh,
+                stressed_replay.batch_adjustment_mwh,
+                places=6,
+            )
+            self.assertAlmostEqual(
+                sum(gurobi_replay.grid),
+                sum(stressed_replay.grid),
+                places=6,
+            )
 
         impossible_scenario = replace(
             scenario,

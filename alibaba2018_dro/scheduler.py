@@ -23,6 +23,11 @@ try:  # PySCIPOpt 只在 scip_env 里；其它环境仍可导入数据工具。
 except ImportError:  # pragma: no cover
     Model = None
 
+try:  # Gurobi 仅作为可选的追索加速后端。
+    import gurobipy as gp
+except ImportError:  # pragma: no cover
+    gp = None
+
 try:  # 碳排放 LP 对偶割使用 HiGHS 的稳定 marginal 接口。
     from scipy.optimize import linprog
 except ImportError:  # pragma: no cover
@@ -1135,7 +1140,7 @@ def replay_joint_scenario(
     )
 
 
-def replay_joint_scenario_with_batch_recourse(
+def _replay_joint_scenario_with_batch_recourse_scip(
     inputs: list[HourlyInput],
     plan: DayAheadResult,
     scenario: ScenarioRealization,
@@ -1386,6 +1391,290 @@ def replay_joint_scenario_with_batch_recourse(
     )
 
 
+def _replay_joint_scenario_with_batch_recourse_gurobi(
+    inputs: list[HourlyInput],
+    plan: DayAheadResult,
+    scenario: ScenarioRealization,
+    *,
+    pv_capacity_mw: float,
+    wind_capacity_mw: float,
+    g_max_mw: float,
+    r_max_mw: float,
+    p_grid_initial_mw: float,
+    solar_reference_mwh: float = SOLAR_REFERENCE_MWH,
+    wind_reference_mwh: float = WIND_REFERENCE_MWH,
+    tolerance: float = 1e-7,
+) -> ScenarioReplayResult:
+    """用 Gurobi 求与 SCIP 后端相同的三阶段有限批处理追索。"""
+
+    if gp is None:
+        raise RuntimeError("gurobipy is required for recourse_solver='gurobi'")
+    if not plan.feasible:
+        raise ValueError("cannot replay an infeasible day-ahead plan")
+    hours = len(inputs)
+    if hours != len(plan.batch):
+        raise ValueError("inputs and plan must have the same horizon")
+    scenario_lengths = (
+        len(scenario.cumulative_arrived_core_hours),
+        len(scenario.cumulative_due_core_hours),
+        len(scenario.residual_solar_mwh),
+        len(scenario.residual_wind_mwh),
+        len(scenario.residual_carbon_lbs_per_kwh),
+    )
+    if any(length != hours for length in scenario_lengths):
+        raise ValueError("scenario must match the input horizon")
+    if tolerance < 0.0:
+        raise ValueError("tolerance must be non-negative")
+    conversions = {item.workload_mwh_per_core_hour for item in inputs}
+    if len(conversions) != 1 or next(iter(conversions)) <= 0.0:
+        raise ValueError(
+            "inputs must carry one positive workload_mwh_per_core_hour conversion"
+        )
+    workload_conversion = next(iter(conversions))
+
+    pv = _local_resource_profile(
+        [
+            inputs[t].forecast_erco_solar_generation_mwh
+            + scenario.residual_solar_mwh[t]
+            for t in range(hours)
+        ],
+        capacity_mw=pv_capacity_mw,
+        reference_mwh=solar_reference_mwh,
+        label="scenario_pv",
+    )
+    wind = _local_resource_profile(
+        [
+            inputs[t].forecast_erco_wind_generation_mwh
+            + scenario.residual_wind_mwh[t]
+            for t in range(hours)
+        ],
+        capacity_mw=wind_capacity_mw,
+        reference_mwh=wind_reference_mwh,
+        label="scenario_wind",
+    )
+    fallback_capacity_mw = max(item.batch_window_mwh for item in inputs)
+    capacity_mw = [
+        item.batch_capacity_mw
+        if item.batch_capacity_mw is not None
+        else fallback_capacity_mw
+        for item in inputs
+    ]
+    model = gp.Model("scenario_batch_recourse_gurobi")
+    model.Params.OutputFlag = 0
+    model.Params.Threads = 1
+    model.Params.FeasibilityTol = 1e-8
+    model.Params.IntFeasTol = 1e-8
+    model.Params.OptimalityTol = 1e-8
+    batch = {
+        t: model.addVar(lb=0.0, ub=capacity_mw[t], name=f"batch_{t}")
+        for t in range(hours)
+    }
+    grid_upper_mw = (
+        inputs[0].online_mw
+        + inputs[0].base_mw
+        + max(capacity_mw)
+        + max(plan.bess_charge, default=0.0)
+    )
+    grid = {
+        t: model.addVar(lb=0.0, ub=grid_upper_mw, name=f"grid_{t}")
+        for t in range(hours)
+    }
+    curtailment = {
+        t: model.addVar(lb=0.0, ub=pv[t] + wind[t], name=f"curtailment_{t}")
+        for t in range(hours)
+    }
+    violation_workload = model.addVar(vtype=gp.GRB.BINARY, name="violate_workload")
+    violation_grid = model.addVar(vtype=gp.GRB.BINARY, name="violate_grid")
+    violation_ramp = model.addVar(vtype=gp.GRB.BINARY, name="violate_ramp")
+    deviations: list[object] = []
+    cumulative_batch: object = 0.0
+    workload_big_m = max(sum(plan.batch), 1.0)
+    p_must = inputs[0].online_mw + inputs[0].base_mw
+    previous_grid: object = p_grid_initial_mw
+    ramp_big_m = 2.0 * grid_upper_mw + abs(p_grid_initial_mw)
+    for t in range(hours):
+        deviation_positive = model.addVar(lb=0.0, name=f"dev_pos_{t}")
+        deviation_negative = model.addVar(lb=0.0, name=f"dev_neg_{t}")
+        model.addConstr(
+            batch[t] - plan.batch[t] == deviation_positive - deviation_negative
+        )
+        deviations.append(deviation_positive + deviation_negative)
+        cumulative_batch += batch[t]
+        model.addConstr(
+            cumulative_batch
+            <= scenario.cumulative_arrived_core_hours[t] * workload_conversion
+            + workload_big_m * violation_workload
+        )
+        model.addConstr(
+            cumulative_batch
+            >= scenario.cumulative_due_core_hours[t] * workload_conversion
+            - workload_big_m * violation_workload
+        )
+        model.addConstr(
+            grid[t]
+            == p_must
+            + batch[t]
+            + plan.bess_charge[t]
+            - plan.bess_discharge[t]
+            - pv[t]
+            - wind[t]
+            + curtailment[t]
+        )
+        model.addConstr(grid[t] <= g_max_mw + grid_upper_mw * violation_grid)
+        model.addConstr(
+            grid[t] - previous_grid
+            <= r_max_mw + ramp_big_m * violation_ramp
+        )
+        model.addConstr(
+            grid[t] - previous_grid
+            >= -r_max_mw - ramp_big_m * violation_ramp
+        )
+        previous_grid = grid[t]
+    model.addConstr(gp.quicksum(batch.values()) == sum(plan.batch))
+    carbon = [
+        max(
+            0.0,
+            inputs[t].forecast_consumed_co2_lbs_per_kwh
+            + scenario.residual_carbon_lbs_per_kwh[t],
+        )
+        for t in range(hours)
+    ]
+    total_risk_violations = violation_workload + violation_grid + violation_ramp
+    model.setObjective(total_risk_violations, gp.GRB.MINIMIZE)
+    model.optimize()
+    if model.Status != gp.GRB.OPTIMAL:
+        raise RuntimeError(f"Gurobi batch recourse risk stage is {model.Status}")
+    selected_risk = (
+        round(violation_workload.X),
+        round(violation_grid.X),
+        round(violation_ramp.X),
+    )
+    model.addConstr(violation_workload == selected_risk[0])
+    model.addConstr(violation_grid == selected_risk[1])
+    model.addConstr(violation_ramp == selected_risk[2])
+    total_deviation = gp.quicksum(deviations)
+    model.setObjective(total_deviation, gp.GRB.MINIMIZE)
+    model.optimize()
+    if model.Status != gp.GRB.OPTIMAL:
+        raise RuntimeError(
+            "Gurobi batch recourse replay is "
+            f"{model.Status}; scenario may be physically infeasible"
+        )
+    deviation_value = model.ObjVal
+    model.addConstr(
+        total_deviation
+        <= deviation_value + max(1e-6, abs(deviation_value) * 1e-9)
+    )
+    model.setObjective(gp.quicksum(grid.values()), gp.GRB.MINIMIZE)
+    model.optimize()
+    if model.Status != gp.GRB.OPTIMAL:
+        raise RuntimeError(
+            f"Gurobi batch recourse replay second stage is {model.Status}"
+        )
+
+    batch_values = [batch[t].X for t in range(hours)]
+    grid_values = [grid[t].X for t in range(hours)]
+    curtailment_values = [curtailment[t].X for t in range(hours)]
+    carbon_kg = _carbon_kg(grid_values, carbon)
+    prices = [item.dam_lz_houston_usd_per_mwh for item in inputs]
+    grid_cost = sum(
+        price * value for price, value in zip(prices, grid_values, strict=True)
+    )
+    grid_limit_violation = any(
+        value > g_max_mw + tolerance for value in grid_values
+    )
+    ramp_violation = any(
+        abs(value - previous) > r_max_mw + tolerance
+        for value, previous in zip(
+            grid_values,
+            [p_grid_initial_mw, *grid_values[:-1]],
+            strict=True,
+        )
+    )
+    cumulative = 0.0
+    workload_envelope_violation_mwh = 0.0
+    for t, value in enumerate(batch_values):
+        cumulative += value
+        arrived = scenario.cumulative_arrived_core_hours[t] * workload_conversion
+        due = scenario.cumulative_due_core_hours[t] * workload_conversion
+        workload_envelope_violation_mwh = max(
+            workload_envelope_violation_mwh,
+            cumulative - arrived,
+            due - cumulative,
+        )
+    grid_limit_violation_mw = max(0.0, max(grid_values, default=0.0) - g_max_mw)
+    ramp_violation_mw = max(
+        [
+            abs(value - previous) - r_max_mw
+            for value, previous in zip(
+                grid_values,
+                [p_grid_initial_mw, *grid_values[:-1]],
+                strict=True,
+            )
+        ],
+        default=0.0,
+    )
+    result = ScenarioReplayResult(
+        batch=batch_values,
+        batch_adjustment_mwh=sum(
+            abs(actual - nominal)
+            for actual, nominal in zip(batch_values, plan.batch, strict=True)
+        ),
+        grid=grid_values,
+        curtailment=curtailment_values,
+        grid_cost=grid_cost,
+        operating_cost=grid_cost + plan.bess_degradation_cost,
+        carbon_kg=carbon_kg,
+        workload_envelope_violation_mwh=workload_envelope_violation_mwh,
+        grid_limit_violation_mw=grid_limit_violation_mw,
+        ramp_violation_mw=ramp_violation_mw,
+        workload_violation=workload_envelope_violation_mwh > tolerance,
+        carbon_violation=False,
+        grid_limit_violation=grid_limit_violation,
+        ramp_violation=ramp_violation,
+    )
+    model.dispose()
+    return result
+
+
+def replay_joint_scenario_with_batch_recourse(
+    inputs: list[HourlyInput],
+    plan: DayAheadResult,
+    scenario: ScenarioRealization,
+    *,
+    pv_capacity_mw: float,
+    wind_capacity_mw: float,
+    g_max_mw: float,
+    r_max_mw: float,
+    p_grid_initial_mw: float,
+    solar_reference_mwh: float = SOLAR_REFERENCE_MWH,
+    wind_reference_mwh: float = WIND_REFERENCE_MWH,
+    tolerance: float = 1e-7,
+    recourse_solver: str = "scip",
+) -> ScenarioReplayResult:
+    """按指定后端求三阶段有限批处理追索；数学模型保持一致。"""
+
+    solvers = {
+        "scip": _replay_joint_scenario_with_batch_recourse_scip,
+        "gurobi": _replay_joint_scenario_with_batch_recourse_gurobi,
+    }
+    if recourse_solver not in solvers:
+        raise ValueError("recourse_solver must be 'scip' or 'gurobi'")
+    return solvers[recourse_solver](
+        inputs,
+        plan,
+        scenario,
+        pv_capacity_mw=pv_capacity_mw,
+        wind_capacity_mw=wind_capacity_mw,
+        g_max_mw=g_max_mw,
+        r_max_mw=r_max_mw,
+        p_grid_initial_mw=p_grid_initial_mw,
+        solar_reference_mwh=solar_reference_mwh,
+        wind_reference_mwh=wind_reference_mwh,
+        tolerance=tolerance,
+    )
+
+
 def solve_carbon_recourse_subproblem(
     inputs: list[HourlyInput],
     plan: DayAheadResult,
@@ -1585,6 +1874,7 @@ def solve_decomposed_saa_wind_solar_storage(
     max_iterations: int = 8,
     display_progress: bool = False,
     replay_workers: int = 1,
+    recourse_solver: str = "scip",
 ) -> SaaDayAheadResult:
     """用活动场景约束生成求解 SAA，并用全部场景 LP 回放验收。
 
@@ -1599,6 +1889,10 @@ def solve_decomposed_saa_wind_solar_storage(
         raise ValueError("max_iterations must be positive")
     if replay_workers <= 0:
         raise ValueError("replay_workers must be positive")
+    if recourse_solver not in {"scip", "gurobi"}:
+        raise ValueError("recourse_solver must be 'scip' or 'gurobi'")
+    if recourse_solver == "gurobi" and gp is None:
+        raise RuntimeError("gurobipy is required for recourse_solver='gurobi'")
     total_scenarios = len(scenarios)
     allowed = {
         "workload": math.floor(beta_workload * total_scenarios + 1e-9),
@@ -1689,6 +1983,7 @@ def solve_decomposed_saa_wind_solar_storage(
             p_grid_initial_mw=p_grid_initial_mw,
             solar_reference_mwh=solar_reference_mwh,
             wind_reference_mwh=wind_reference_mwh,
+            recourse_solver=recourse_solver,
         )
         if replay_workers == 1:
             replays = [replay_one(scenario) for scenario in scenarios]
@@ -1723,6 +2018,7 @@ def solve_decomposed_saa_wind_solar_storage(
                 f"iteration={iteration}",
                 *(f"{name}={len(violations[name])}/{total_scenarios}" for name in allowed),
                 f"workers={replay_workers}",
+                f"solver={recourse_solver}",
                 flush=True,
             )
         if all(len(violations[name]) <= allowed[name] for name in allowed):

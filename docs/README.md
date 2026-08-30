@@ -56,7 +56,7 @@ flowchart LR
 | 8. 场景重建 | `scenarios.load_saa_scenarios` | manifest、校准表、workload 源日 | 联合 `ScenarioRealization` 序列 |
 | 9. 确定性实验 | `run_four_windows.py` → `scheduler.solve_wind_solar_storage` → `replay_actual_wind_solar` | `HourlyInput` | 确定性日前计划与实际回放结果 |
 | 10. SAA 实验 | `run_uncertainty_methods.py` → `solve_decomposed_saa_wind_solar_storage` | `HourlyInput` + 联合场景 | 活动场景主问题、全场景回放与三类运行风险 |
-| 11. 校准选择 | `summarize_saa_runs` → `select_saa_sample_size` | 每窗口结果 CSV | Wilson 上界、汇总表和样本量选择 JSON |
+| 11. 校准选择 | `summarize_saa_runs` → `select_saa_sample_size` | 每窗口结果 CSV | 每个 N 完成 36 窗口后计算 Wilson 上界；首个达标 N 写入选择 JSON 并停止 |
 
 定位问题时从结果文件的 `run_config.json` 和 manifest 哈希反向追踪：结果目录 → 运行脚本 → `inputs.py`/`scenarios.py` → processed 数据 → 对应准备脚本 → raw 数据。不要直接手工修改中间 CSV 来修正模型结果。
 
@@ -87,7 +87,7 @@ flowchart LR
 | `../scripts/prepare_energy_inputs.py` | 生成无泄漏预测、能源窗口和输入清单 |
 | `../scripts/prepare_saa_scenarios.py` | 生成 2024 校准日块表与 SAA manifest |
 | `../scripts/run_four_windows.py` | 运行确定性四窗口基线 |
-| `../scripts/run_uncertainty_methods.py` | 运行 SAA 分解、参数校准、验证与汇总 |
+| `../scripts/run_uncertainty_methods.py` | 按 N 自适应运行 SAA 三折分解、验证、Wilson 汇总与最小达标样本量选择 |
 
 ## 验证代码
 

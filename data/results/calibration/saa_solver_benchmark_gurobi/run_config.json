@@ -1,0 +1,31 @@
+{
+  "decomposition": "active_scenarios_with_scipy_highs_three_risk_replay",
+  "method": "SAA",
+  "parameters": {
+    "bess_degradation_cost_usd_per_mwh_throughput": 20.0,
+    "beta": 0.1,
+    "decomposition_max_iterations": 3,
+    "effective_capacity_fraction": 0.7,
+    "held_out_folds": [
+      "fold_1"
+    ],
+    "recourse_solver": "gurobi",
+    "replay_workers": 8,
+    "sample_size_candidates": [
+      20
+    ],
+    "selection_mode": "adaptive",
+    "time_limit_seconds_per_solve": 300.0,
+    "validation_windows_per_fold": 1,
+    "wilson_confidence_one_sided": 0.95
+  },
+  "protocol": "2024_three_fold_sequential_sample_selection_v2",
+  "schema_version": 2,
+  "source_sha256": {
+    "aggregate_workload": "59A80BBB434AF8E27BF47920CBF62190E8631175E01B3F5CEA8F28D4E7973CAB",
+    "calibration_day_blocks": "585CFEC3EDC8FE651D65A7E9B2908F954078986EA3C0D7D4C74C7481BFD366ED",
+    "nominal_workload": "91E67548DDBF8B1A94E720B8ECF1F6E73584FA6868199EC3728584DD2D05EC5A",
+    "scenario_manifest": "5FB3F06DACA45991FAFA1B33CF14BE017608C0DEAA06611E59C94981A390351A",
+    "workload_stats": "37705A3DB357E5CC42B0D6332FFEC543365C59E01FD5B5B22CB7BFBAAB4AFFFB"
+  }
+}

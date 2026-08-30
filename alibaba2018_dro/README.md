@@ -11,7 +11,7 @@
 | `energy.py` | 构造 1062h 论文窗口输入与清单 |
 | `residuals.py` | 生成风光碳联合残差、可用日块和季节平衡折 |
 | `scenarios.py` | 从 manifest 重建 SAA 训练、验证和回放场景 |
-| `scheduler.py` | 确定性/SAA 日前模型、有限批处理追索、三类运行风险和实际回放；碳割仅供历史诊断复现 |
+| `scheduler.py` | SCIP 确定性/SAA 日前模型、SCIP/Gurobi 可选有限批处理追索、三类运行风险和实际回放；碳割仅供历史诊断复现 |
 
 数据流：
 

@@ -114,7 +114,7 @@ c_{\mathrm{deg}}
 | 算力容量 | 有效回放容量 $\kappa=0.7$ 与统一缩放 | $\kappa\in\{0.6,0.7,0.8\}$ 容量口径情景 |
 | 结果 | 旧确定性结果仅作过程证据；三风险 SAA 预检已通过，完整三折正在运行 | 完成 SAA、RO、DRO 的统一比较结果 |
 
-确定性入口为 `scripts/run_four_windows.py`，不确定性方法入口为 `scripts/run_uncertainty_methods.py`。预测参数已使用 2023 年全年选择；2024 年 362 个可用日块及训练/验证/回放 manifest 已生成，SAA 有限追索和活动场景分解已接入。三风险短预检已通过，完整 SAA 三折正在按检查点运行；完成后再实现静态 Γ-RO 和 TV-DRO。在完成统一比较前，不把当前过程证据写成方法优劣结论。
+确定性入口为 `scripts/run_four_windows.py`，不确定性方法入口为 `scripts/run_uncertainty_methods.py`。预测参数已使用 2023 年全年选择；2024 年 362 个可用日块及训练/验证/回放 manifest 已生成，SAA 有限追索和活动场景分解已接入。三风险短预检已通过，完整 SAA 三折按 $N=20\rightarrow50\rightarrow100\rightarrow200$ 自适应运行：每个 N 完成 36 个窗口后，若三类 Wilson 上界均不超过 10% 就立即停止，否则才扩大样本。完成后再实现静态 Γ-RO 和 TV-DRO。在完成统一比较前，不把当前过程证据写成方法优劣结论。
 
 ## 7. 诚实边界
 

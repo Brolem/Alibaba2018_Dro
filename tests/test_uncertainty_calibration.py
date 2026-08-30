@@ -38,9 +38,9 @@ class SaaCalibrationTests(unittest.TestCase):
         self.assertLess(wilson_upper_bound(0, 36), 0.10)
         self.assertGreater(wilson_upper_bound(1, 36), 0.10)
 
-    def test_summary_and_selection_follow_registered_cost_tie_rule(self) -> None:
+    def test_adaptive_selection_uses_smallest_reliable_sample_size(self) -> None:
         rows: list[dict[str, str]] = []
-        for sample_size, cost in ((20, 100.05), (50, 100.0), (100, 101.0), (200, 102.0)):
+        for sample_size, cost in ((20, 150.0), (50, 100.0), (100, 101.0), (200, 102.0)):
             for fold in HELD_OUT_FOLDS:
                 for window in range(12):
                     rows.append(
@@ -53,6 +53,7 @@ class SaaCalibrationTests(unittest.TestCase):
         self.assertTrue(all(item["meets_90pct_target"] for item in summaries))
         self.assertEqual(selection["selected_sample_size"], 20)
         self.assertTrue(selection["target_achieved"])
+        self.assertIn("smallest tested N", selection["selection_rule"])
 
     def test_failed_reliability_gate_uses_minimum_maximum_upper_bound(self) -> None:
         rows: list[dict[str, str]] = []

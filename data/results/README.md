@@ -15,7 +15,10 @@
 | 目录 | 用途与结论 |
 | --- | --- |
 | `saa_three_risk_preflight/` | 当前三风险主线预检；`fold_1/window=0/N=20` 最优，训练及验证的算力包络、并网、爬坡均无实质违反 |
-| `saa_three_fold/` | 当前三折正式运行目录；逐组合保存检查点，全部 144 个组合完成后生成汇总和样本量选择 |
+| `saa_solver_benchmark_scip/` | 求解器 A/B 基准的 SCIP 追索组；`fold_1/window=0/N=20`，8 个回放进程 |
+| `saa_solver_benchmark_gurobi/` | 相同输入与参数的 Gurobi 追索组；风险和词典序目标一致，总时间减少 48.3% |
+| `saa_solver_benchmark_summary.json` | 两组运行时间、加速比、关键一致性检查及等价多解边界 |
+| `saa_adaptive_three_fold/` | 当前三折正式运行目录；按 N 分阶段保存检查点，每完成 36 个窗口即计算 Wilson 门槛，首个达标 N 立即停止 |
 
 当前只保留三风险 SAA 主线结果。八个已停止的碳预算/碳割预检目录已于 2026-08-29 删除；失败原因的文字摘要保留在 `docs/implementation_log.md`，需要时可从 Git 历史恢复原始文件。每个现行目录的 `run_config.json` 固定输入哈希和求解参数。
 

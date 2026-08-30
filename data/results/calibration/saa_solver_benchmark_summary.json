@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "benchmark": "fold_1_window_0_N20_recourse_solver",
+  "fixed_settings": {
+    "day_ahead_solver": "SCIP",
+    "decomposition_max_iterations": 3,
+    "replay_workers": 8,
+    "time_limit_seconds_per_master": 300
+  },
+  "results": {
+    "scip": {
+      "runtime_seconds": 382.1098456000036,
+      "solver_status": "optimal_decomposed"
+    },
+    "gurobi": {
+      "runtime_seconds": 197.56602259998908,
+      "solver_status": "optimal_decomposed"
+    },
+    "speedup_scip_over_gurobi": 1.934086846368616,
+    "runtime_reduction_fraction": 0.48296013600549004
+  },
+  "equivalence": {
+    "decomposition_iterations_equal": true,
+    "active_scenario_count_equal": true,
+    "nominal_operating_cost_equal": true,
+    "training_mean_batch_adjustment_abs_difference_mwh": 1.7053025658242404e-13,
+    "validation_batch_adjustment_abs_difference_mwh": 2.7711166694643907e-13,
+    "workload_violation_equal": true,
+    "grid_limit_violation_equal": true,
+    "ramp_violation_equal": true,
+    "actual_operating_cost_relative_difference": 0.0005216498976239054,
+    "actual_carbon_relative_difference": 0.0014949889155971366,
+    "note": "Risk and lexicographic objective levels agree. Actual cost and carbon are reported attributes, not the final recourse objective, so alternate optimal grid timing can differ slightly across solvers."
+  }
+}

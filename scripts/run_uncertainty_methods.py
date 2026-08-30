@@ -198,23 +198,13 @@ def select_saa_sample_size(
         raise ValueError("no complete SAA summaries are available")
     passing = [item for item in summaries if bool(item["meets_90pct_target"])]
     if passing:
-        minimum_cost = min(
-            float(item["mean_nominal_operating_cost_usd"]) for item in passing
-        )
-        tolerance = max(abs(minimum_cost) * 0.001, 1e-9)
-        cost_tied = [
-            item
-            for item in passing
-            if float(item["mean_nominal_operating_cost_usd"])
-            <= minimum_cost + tolerance
-        ]
-        chosen = min(cost_tied, key=lambda item: int(item["sample_size"]))
+        chosen = min(passing, key=lambda item: int(item["sample_size"]))
         return {
             "selected_sample_size": int(chosen["sample_size"]),
             "target_achieved": True,
             "selection_rule": (
-                "all three one-sided 95% Wilson upper bounds <= 0.10; "
-                "minimum mean nominal cost; <=0.1% cost tie selects smaller N"
+                "smallest tested N whose three one-sided 95% Wilson upper "
+                "bounds are all <= 0.10"
             ),
             "selected_max_wilson_upper_95": chosen["max_wilson_upper_95"],
             "selected_mean_nominal_operating_cost_usd": chosen[
@@ -288,6 +278,11 @@ def _run_config(
     workload_csv: Path,
     envelope_csv: Path,
     stats_json: Path,
+    sample_sizes: tuple[int, ...],
+    folds: tuple[str, ...],
+    max_windows: int,
+    selection_mode: str,
+    recourse_solver: str,
     time_limit_seconds: float | None,
     decomposition_max_iterations: int,
     replay_workers: int,
@@ -295,7 +290,7 @@ def _run_config(
     return {
         "schema_version": 2,
         "method": "SAA",
-        "protocol": "2024_three_fold_12_pseudo_windows_v1",
+        "protocol": "2024_three_fold_sequential_sample_selection_v2",
         "decomposition": "active_scenarios_with_scipy_highs_three_risk_replay",
         "parameters": {
             "beta": 0.10,
@@ -307,6 +302,11 @@ def _run_config(
             "time_limit_seconds_per_solve": time_limit_seconds,
             "decomposition_max_iterations": decomposition_max_iterations,
             "replay_workers": replay_workers,
+            "sample_size_candidates": list(sample_sizes),
+            "held_out_folds": list(folds),
+            "validation_windows_per_fold": max_windows,
+            "selection_mode": selection_mode,
+            "recourse_solver": recourse_solver,
         },
         "source_sha256": {
             "scenario_manifest": sha256_file(manifest_path),
@@ -357,6 +357,11 @@ def main() -> None:
         default=list(SAA_SAMPLE_SIZES),
     )
     parser.add_argument(
+        "--selection-mode",
+        choices=("adaptive", "full_grid"),
+        default="adaptive",
+    )
+    parser.add_argument(
         "--folds",
         nargs="+",
         choices=HELD_OUT_FOLDS,
@@ -382,9 +387,14 @@ def main() -> None:
         type=int,
         default=1,
     )
+    parser.add_argument(
+        "--recourse-solver",
+        choices=("scip", "gurobi"),
+        default="scip",
+    )
     args = parser.parse_args()
 
-    sample_sizes = tuple(dict.fromkeys(args.sample_sizes))
+    sample_sizes = tuple(sorted(set(args.sample_sizes)))
     if any(size not in SAA_SAMPLE_SIZES for size in sample_sizes):
         raise ValueError(f"sample sizes must be selected from {SAA_SAMPLE_SIZES}")
     if not 1 <= args.max_windows <= VALIDATION_WINDOWS_PER_FOLD:
@@ -405,6 +415,11 @@ def main() -> None:
         workload_csv=args.aggregate_workload_csv,
         envelope_csv=args.envelope_csv,
         stats_json=args.stats_json,
+        sample_sizes=sample_sizes,
+        folds=tuple(args.folds),
+        max_windows=args.max_windows,
+        selection_mode=args.selection_mode,
+        recourse_solver=args.recourse_solver,
         time_limit_seconds=args.time_limit_seconds,
         decomposition_max_iterations=args.decomposition_max_iterations,
         replay_workers=args.replay_workers,
@@ -432,45 +447,46 @@ def main() -> None:
         )
         for row in existing_rows
     }
-    for held_out_fold in args.folds:
-        training_scenarios = load_saa_scenarios(
-            manifest_path=args.manifest,
-            calibration_csv=args.calibration_csv,
-            workload_csv=args.aggregate_workload_csv,
-            split="training",
-            held_out_fold=held_out_fold,
-            scenario_count=max(sample_sizes),
-        )
-        validation_scenarios = load_saa_scenarios(
-            manifest_path=args.manifest,
-            calibration_csv=args.calibration_csv,
-            workload_csv=args.aggregate_workload_csv,
-            split="validation",
-            held_out_fold=held_out_fold,
-        )
-        for validation_scenario in validation_scenarios[: args.max_windows]:
-            energy_rows = load_calibration_energy_rows(
-                args.calibration_csv,
-                validation_scenario.energy_delivery_dates,
+    for sample_size in sample_sizes:
+        print("candidate_start:", f"N={sample_size}", flush=True)
+        for held_out_fold in args.folds:
+            training_scenarios = load_saa_scenarios(
+                manifest_path=args.manifest,
+                calibration_csv=args.calibration_csv,
+                workload_csv=args.aggregate_workload_csv,
+                split="training",
+                held_out_fold=held_out_fold,
+                scenario_count=sample_size,
             )
-            inputs = build_hourly_input_from_rows(
-                energy_rows,
-                args.envelope_csv,
-                args.stats_json,
+            validation_scenarios = load_saa_scenarios(
+                manifest_path=args.manifest,
+                calibration_csv=args.calibration_csv,
+                workload_csv=args.aggregate_workload_csv,
+                split="validation",
+                held_out_fold=held_out_fold,
             )
-            p_must = inputs[0].online_mw + inputs[0].base_mw
-            p_peak = _peak_load(inputs)
-            g_max_mw = p_peak
-            r_max_mw = 0.1 * p_peak
-            bess_power_mw = 0.5 * p_peak
-            bess_energy_mwh = 2.0 * bess_power_mw
-            pv_capacity_mw = PV_CAPACITY_FRACTION_OF_MUST_LOAD * p_must
-            wind_capacity_mw = WIND_CAPACITY_FRACTION_OF_MUST_LOAD * p_must
-            for sample_size in sample_sizes:
+            for validation_scenario in validation_scenarios[: args.max_windows]:
                 key = (held_out_fold, validation_scenario.scenario_id, sample_size)
                 if key in completed_keys:
                     print("skip:", held_out_fold, validation_scenario.scenario_id, sample_size)
                     continue
+                energy_rows = load_calibration_energy_rows(
+                    args.calibration_csv,
+                    validation_scenario.energy_delivery_dates,
+                )
+                inputs = build_hourly_input_from_rows(
+                    energy_rows,
+                    args.envelope_csv,
+                    args.stats_json,
+                )
+                p_must = inputs[0].online_mw + inputs[0].base_mw
+                p_peak = _peak_load(inputs)
+                g_max_mw = p_peak
+                r_max_mw = 0.1 * p_peak
+                bess_power_mw = 0.5 * p_peak
+                bess_energy_mwh = 2.0 * bess_power_mw
+                pv_capacity_mw = PV_CAPACITY_FRACTION_OF_MUST_LOAD * p_must
+                wind_capacity_mw = WIND_CAPACITY_FRACTION_OF_MUST_LOAD * p_must
                 print(
                     "start:",
                     held_out_fold,
@@ -480,7 +496,7 @@ def main() -> None:
                 )
                 result = solve_decomposed_saa_wind_solar_storage(
                     inputs,
-                    training_scenarios[:sample_size],
+                    training_scenarios,
                     g_max_mw=g_max_mw,
                     r_max_mw=r_max_mw,
                     p_grid_initial_mw=p_must,
@@ -492,6 +508,7 @@ def main() -> None:
                     max_iterations=args.decomposition_max_iterations,
                     display_progress=True,
                     replay_workers=args.replay_workers,
+                    recourse_solver=args.recourse_solver,
                 )
                 if result.feasible:
                     replay = replay_joint_scenario_with_batch_recourse(
@@ -503,6 +520,7 @@ def main() -> None:
                         g_max_mw=g_max_mw,
                         r_max_mw=r_max_mw,
                         p_grid_initial_mw=p_must,
+                        recourse_solver=args.recourse_solver,
                     )
                     row: dict[str, object] = {
                         "method": "SAA",
@@ -571,15 +589,44 @@ def main() -> None:
                     flush=True,
                 )
 
+        candidate_rows = _read_runs(run_path)
+        candidate_summary = summarize_saa_runs(
+            candidate_rows,
+            sample_sizes=(sample_size,),
+        )
+        if candidate_summary:
+            summary = candidate_summary[0]
+            print(
+                "candidate_complete:",
+                f"N={sample_size}",
+                f"max_wilson_upper_95={summary['max_wilson_upper_95']}",
+                f"meets_90pct_target={summary['meets_90pct_target']}",
+                flush=True,
+            )
+            if args.selection_mode == "adaptive" and bool(
+                summary["meets_90pct_target"]
+            ):
+                print("adaptive_stop:", f"selected_N={sample_size}", flush=True)
+                break
+
     all_rows = _read_runs(run_path)
-    summaries = summarize_saa_runs(all_rows)
-    if len(summaries) == len(SAA_SAMPLE_SIZES):
+    summaries = summarize_saa_runs(all_rows, sample_sizes=sample_sizes)
+    if summaries:
         summary_path = args.output_directory / "saa_cv_summary.csv"
         summary_fields = list(summaries[0].keys())
         _write_csv(summary_path, summaries, summary_fields)
+        print("written:", summary_path)
+    target_achieved = any(bool(item["meets_90pct_target"]) for item in summaries)
+    all_candidates_complete = len(summaries) == len(sample_sizes)
+    selection_ready = all_candidates_complete or (
+        args.selection_mode == "adaptive" and target_achieved
+    )
+    if selection_ready:
         selection = {
-            "schema_version": 1,
+            "schema_version": 2,
             "method": "SAA",
+            "selection_mode": args.selection_mode,
+            "candidate_order": list(sample_sizes),
             **select_saa_sample_size(summaries),
             "candidate_summaries": summaries,
             "run_config_sha256": sha256_file(config_path),
@@ -593,12 +640,11 @@ def main() -> None:
         )
         print("selected_sample_size:", selection["selected_sample_size"])
         print("target_achieved:", selection["target_achieved"])
-        print("written:", summary_path)
         print("written:", selection_path)
     else:
         print(
-            "partial_grid:",
-            f"complete_candidates={len(summaries)}/{len(SAA_SAMPLE_SIZES)}",
+            "partial_selection:",
+            f"complete_candidates={len(summaries)}/{len(sample_sizes)}",
         )
     print("written:", run_path)
 
