@@ -1,0 +1,47 @@
+{
+  "candidate_order": [
+    20,
+    50,
+    100,
+    200
+  ],
+  "candidate_summaries": [
+    {
+      "all_solves_optimal": true,
+      "grid_limit_max_violation_magnitude": 0.0,
+      "grid_limit_mean_violation_magnitude": 0.0,
+      "grid_limit_violation_count": 0,
+      "grid_limit_violation_rate": 0.0,
+      "grid_limit_wilson_upper_95": 0.06990067087687767,
+      "max_wilson_upper_95": 0.06990067087687767,
+      "mean_actual_operating_cost_usd": 14492.47224812319,
+      "mean_nominal_operating_cost_usd": 13128.341968933477,
+      "mean_solver_runtime_seconds": 182.24509539722203,
+      "meets_90pct_target": true,
+      "method": "SAA",
+      "optimal_solve_count": 36,
+      "ramp_max_violation_magnitude": 1.3322676295501878e-15,
+      "ramp_mean_violation_magnitude": 6.908054375445419e-16,
+      "ramp_violation_count": 0,
+      "ramp_violation_rate": 0.0,
+      "ramp_wilson_upper_95": 0.06990067087687767,
+      "sample_size": 20,
+      "validation_window_count": 36,
+      "workload_max_violation_magnitude": 2.5579538487363607e-13,
+      "workload_mean_violation_magnitude": 1.1368683772161603e-13,
+      "workload_violation_count": 0,
+      "workload_violation_rate": 0.0,
+      "workload_wilson_upper_95": 0.06990067087687767
+    }
+  ],
+  "method": "SAA",
+  "run_config_sha256": "94AF67044DDD8E244762EBAB58E4922DB21E48FCF2EEE7E416A77DEF778CEE9D",
+  "run_results_sha256": "F627CD2A33C672F264A40FBE0DC84C22564D534AC0A00D76393041A1C9467564",
+  "schema_version": 2,
+  "selected_max_wilson_upper_95": 0.06990067087687767,
+  "selected_mean_nominal_operating_cost_usd": 13128.341968933477,
+  "selected_sample_size": 20,
+  "selection_mode": "adaptive",
+  "selection_rule": "smallest tested N whose three one-sided 95% Wilson upper bounds are all <= 0.10",
+  "target_achieved": true
+}

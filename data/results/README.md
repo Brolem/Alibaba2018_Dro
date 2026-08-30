@@ -18,7 +18,7 @@
 | `saa_solver_benchmark_scip/` | 求解器 A/B 基准的 SCIP 追索组；`fold_1/window=0/N=20`，8 个回放进程 |
 | `saa_solver_benchmark_gurobi/` | 相同输入与参数的 Gurobi 追索组；风险和词典序目标一致，总时间减少 48.3% |
 | `saa_solver_benchmark_summary.json` | 两组运行时间、加速比、关键一致性检查及等价多解边界 |
-| `saa_adaptive_three_fold/` | 当前三折正式运行目录；按 N 分阶段保存检查点，每完成 36 个窗口即计算 Wilson 门槛，首个达标 N 立即停止 |
+| `saa_adaptive_three_fold/` | 已完成的三折正式 SAA 校准；`saa_cv_runs.csv` 保存 36 条窗口记录，`saa_cv_summary.csv` 保存 N=20 汇总，`saa_selection.json` 冻结最小达标样本数及输入/结果哈希 |
 
 当前只保留三风险 SAA 主线结果。八个已停止的碳预算/碳割预检目录已于 2026-08-29 删除；失败原因的文字摘要保留在 `docs/implementation_log.md`，需要时可从 Git 历史恢复原始文件。每个现行目录的 `run_config.json` 固定输入哈希和求解参数。
 
