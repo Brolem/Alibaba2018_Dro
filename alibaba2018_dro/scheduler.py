@@ -222,6 +222,61 @@ class GammaRoDayAheadResult:
 
 
 @dataclass(frozen=True)
+class TvDroDayAheadResult:
+    """有限支持 TV-DRO 日前计划及其经验支持审计。"""
+
+    saa_result: SaaDayAheadResult
+    rho: float
+    beta: float
+    support_size: int
+    allowed_violation_count: int
+
+    @property
+    def plan(self) -> DayAheadResult:
+        return self.saa_result.plan
+
+    @property
+    def feasible(self) -> bool:
+        return self.saa_result.feasible
+
+    @property
+    def solver_status(self) -> str:
+        return self.saa_result.solver_status
+
+    @property
+    def runtime_seconds(self) -> float:
+        return self.saa_result.runtime_seconds
+
+    @property
+    def mip_gap(self) -> float:
+        return self.saa_result.mip_gap
+
+
+def tv_dro_allowed_violation_count(
+    support_size: int,
+    *,
+    beta: float,
+    rho: float,
+) -> int:
+    """返回有限支持 TV-DRO 机会约束允许的最大二元违反数。
+
+    对经验分布 ``p_s=1/N`` 和 ``TV(q,p)<=rho``，二元事件的最坏概率为
+    ``min(1, k/N + rho)``。因此鲁棒机会约束等价于
+    ``k <= floor(N * (beta-rho))``；该整数形式也用于识别不可区分的 rho。
+    """
+
+    if support_size <= 0:
+        raise ValueError("support_size must be positive")
+    if not 0.0 <= beta <= 1.0:
+        raise ValueError("beta must be in [0, 1]")
+    if not 0.0 <= rho <= 1.0:
+        raise ValueError("rho must be in [0, 1]")
+    if rho > beta + 1e-12:
+        raise ValueError("rho must not exceed beta for a feasible risk budget")
+    return math.floor(support_size * (beta - rho) + 1e-9)
+
+
+@dataclass(frozen=True)
 class ScenarioReplayResult:
     """日前 BESS 固定、批处理有限追索下的联合场景回放。"""
 
@@ -2822,6 +2877,70 @@ def solve_decomposed_saa_wind_solar_storage(
         active_scenario_count=len(active_indices),
         carbon_cut_count=len(carbon_cuts),
         carbon_cut_violation_lower_bound=carbon_cut_violation_lower_bound,
+    )
+
+
+def solve_finite_support_tv_dro_wind_solar_storage(
+    inputs: list[HourlyInput],
+    scenarios: Sequence[ScenarioRealization],
+    *,
+    rho: float,
+    beta: float = 0.10,
+    g_max_mw: float,
+    r_max_mw: float,
+    p_grid_initial_mw: float,
+    bess_power_mw: float,
+    bess_energy_mwh: float,
+    pv_capacity_mw: float,
+    wind_capacity_mw: float,
+    time_limit_seconds: float | None = None,
+    max_iterations: int = 8,
+    display_progress: bool = False,
+    replay_workers: int = 1,
+    day_ahead_solver: str = "gurobi",
+    recourse_solver: str = "gurobi",
+) -> TvDroDayAheadResult:
+    """求解经验联合支持上的三通道有限支持 TV-DRO。
+
+    三个通道共享同一 TV 半径，但分别约束各自二元违反事件。对每个事件，
+    ``sup_q E_q[Y] = min(1, mean_empirical(Y) + rho)``，所以只需将现有
+    SAA 机会约束的经验风险预算精确收紧为 ``beta-rho``。完整联合场景
+    本身不拆分，场景内算力、风电和光伏的时序及相关性保持不变。
+    """
+
+    support_size = len(scenarios)
+    allowed = tv_dro_allowed_violation_count(
+        support_size,
+        beta=beta,
+        rho=rho,
+    )
+    empirical_beta = allowed / support_size
+    result = solve_decomposed_saa_wind_solar_storage(
+        inputs,
+        scenarios,
+        g_max_mw=g_max_mw,
+        r_max_mw=r_max_mw,
+        p_grid_initial_mw=p_grid_initial_mw,
+        bess_power_mw=bess_power_mw,
+        bess_energy_mwh=bess_energy_mwh,
+        pv_capacity_mw=pv_capacity_mw,
+        wind_capacity_mw=wind_capacity_mw,
+        beta_workload=empirical_beta,
+        beta_grid=empirical_beta,
+        beta_ramp=empirical_beta,
+        time_limit_seconds=time_limit_seconds,
+        max_iterations=max_iterations,
+        display_progress=display_progress,
+        replay_workers=replay_workers,
+        day_ahead_solver=day_ahead_solver,
+        recourse_solver=recourse_solver,
+    )
+    return TvDroDayAheadResult(
+        saa_result=result,
+        rho=rho,
+        beta=beta,
+        support_size=support_size,
+        allowed_violation_count=allowed,
     )
 
 

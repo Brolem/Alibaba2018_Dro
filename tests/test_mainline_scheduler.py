@@ -124,6 +124,27 @@ class GammaRoTests(unittest.TestCase):
         self.assertTrue(gamma_large.gamma_saturated)
 
 
+class TvDroTests(unittest.TestCase):
+    def test_tv_radius_maps_to_exact_binary_violation_budget(self) -> None:
+        self.assertEqual(
+            scheduler.tv_dro_allowed_violation_count(20, beta=0.10, rho=0.0),
+            2,
+        )
+        for rho in (0.01, 0.025, 0.05):
+            self.assertEqual(
+                scheduler.tv_dro_allowed_violation_count(20, beta=0.10, rho=rho),
+                1,
+            )
+        self.assertEqual(
+            scheduler.tv_dro_allowed_violation_count(20, beta=0.10, rho=0.075),
+            0,
+        )
+
+    def test_tv_radius_cannot_exceed_risk_budget(self) -> None:
+        with self.assertRaises(ValueError):
+            scheduler.tv_dro_allowed_violation_count(20, beta=0.10, rho=0.11)
+
+
 @unittest.skipIf(scheduler.Model is None, "PySCIPOpt is only available in scip_env")
 class MainlineSchedulerTests(unittest.TestCase):
     @unittest.skipIf(scheduler.gp is None, "Gurobi is not available")

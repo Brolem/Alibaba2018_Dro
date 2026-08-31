@@ -1,0 +1,47 @@
+{
+  "candidate_order": [
+    0.01,
+    0.025,
+    0.05
+  ],
+  "candidate_summaries": [
+    {
+      "all_solves_optimal": true,
+      "allowed_training_violation_count": 1,
+      "grid_limit_max_violation_magnitude": 0.0,
+      "grid_limit_mean_violation_magnitude": 0.0,
+      "grid_limit_violation_count": 0,
+      "grid_limit_violation_rate": 0.0,
+      "grid_limit_wilson_upper_95": 0.06990067087687767,
+      "max_wilson_upper_95": 0.06990067087687767,
+      "mean_actual_operating_cost_usd": 14504.944988662599,
+      "mean_nominal_operating_cost_usd": 13128.341968933484,
+      "mean_solver_runtime_seconds": 69.2978937527708,
+      "meets_90pct_target": true,
+      "method": "finite_support_TV_DRO",
+      "optimal_solve_count": 36,
+      "ramp_max_violation_magnitude": 1.2212453270876722e-15,
+      "ramp_mean_violation_magnitude": 6.553399798134604e-16,
+      "ramp_violation_count": 0,
+      "ramp_violation_rate": 0.0,
+      "ramp_wilson_upper_95": 0.06990067087687767,
+      "rho": 0.01,
+      "support_size": 20,
+      "validation_window_count": 36,
+      "workload_max_violation_magnitude": 2.5579538487363607e-13,
+      "workload_mean_violation_magnitude": 1.1901590823981678e-13,
+      "workload_violation_count": 0,
+      "workload_violation_rate": 0.0,
+      "workload_wilson_upper_95": 0.06990067087687767
+    }
+  ],
+  "method": "finite_support_TV_DRO",
+  "run_config_sha256": "9863746A3850D101550E381D3C4F71B4DE18E396BB7CF1551B0E8C86AFCE4707",
+  "run_results_sha256": "FC4114A067D60DDC2B409A937BFB3A31C3D06166ED2DA3F8F39E216B075A2C6C",
+  "schema_version": 1,
+  "selected_max_wilson_upper_95": 0.06990067087687767,
+  "selected_rho": 0.01,
+  "selection_mode": "adaptive",
+  "selection_rule": "smallest tested positive rho whose three Wilson upper bounds are all <= 0.10",
+  "target_achieved": true
+}

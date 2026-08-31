@@ -40,6 +40,10 @@ flowchart LR
     LOAD --> DSAA["scheduler.py → 分解 SAA / 三类运行风险场景回放"]
     BUILD --> DSAA
     DSAA --> URES["run_config.json / saa_cv_runs.csv / summary / selection"]
+    CB --> TV["run_tv_dro.py"]
+    SM --> TV
+    TV --> TDRO["scheduler.py → 有限支持 TV-DRO / 活动场景分解"]
+    TDRO --> TRES["tv_dro_cv_runs.csv / summary / selection"]
 ```
 
 ### 流程如何由代码实现
@@ -59,6 +63,8 @@ flowchart LR
 | 11. SAA 校准选择 | `summarize_saa_runs` → `select_saa_sample_size` | 每窗口结果 CSV | 每个N完成36窗口后按 `model.md §3.4.1` 计算三通道Wilson上界；首个达标N写入选择JSON并停止 |
 | 12. 静态 Γ-RO | `run_gamma_ro.py` → `load_hourly_downward_residual_quantiles` → `solve_static_gamma_ro_wind_solar_storage` | 训练折风光下偏分位 + N=20 完整算力包络 | Γ 支持函数鲁棒日前计划、共同验证回放、断点 CSV |
 | 13. Γ 自适应选择 | `run_gamma_ro.summarize_runs` | 每个 Γ 的 36 窗口结果 | 三类 Wilson 上界；达标即停，不可行前区间再细化 |
+| 14. 有限支持 TV-DRO | `run_tv_dro.py` → `solve_finite_support_tv_dro_wind_solar_storage` | N=20完整联合支持、β=0.10、ρ候选 | 以 `floor(N(β-ρ))` 精确收紧三通道训练违反数，断点运行36窗口 |
+| 15. TV 半径选择 | `summarize_tv_dro_runs` → `select_tv_radius` | 每个ρ的36窗口结果 | 首个三通道Wilson上界均不超过0.10的正半径写入选择JSON并停止 |
 
 定位问题时从结果文件的 `run_config.json` 和 manifest 哈希反向追踪：结果目录 → 运行脚本 → `inputs.py`/`scenarios.py` → processed 数据 → 对应准备脚本 → raw 数据。不要直接手工修改中间 CSV 来修正模型结果。
 
@@ -73,7 +79,7 @@ flowchart LR
 | `../alibaba2018_dro/inputs.py` | 把能源、容量和 workload 包络对齐为小时模型输入 |
 | `../alibaba2018_dro/residuals.py` | 生成风、光、碳联合残差日块与季节折 |
 | `../alibaba2018_dro/scenarios.py` | 读取 manifest，重建 SAA/RO 场景并计算训练折小时位置风光下偏分位 |
-| `../alibaba2018_dro/scheduler.py` | 共享模型表达式的 Gurobi 默认/SCIP 可选确定性、SAA、静态 Γ-RO、三类运行风险追索与实际回放；碳排放事后核算 |
+| `../alibaba2018_dro/scheduler.py` | 共享模型表达式的 Gurobi 默认/SCIP 可选确定性、SAA、静态 Γ-RO、有限支持 TV-DRO、三类运行风险追索与实际回放；碳排放事后核算 |
 
 更详细的数据流见 `../alibaba2018_dro/README.md`。`scheduler.py` 当前主线使用 Gurobi，薄适配层使 SCIP 对照复用同一套变量、目标和约束表达式；碳排放 LP 对偶割另外使用 SciPy/HiGHS。
 
@@ -91,6 +97,7 @@ flowchart LR
 | `../scripts/run_four_windows.py` | 运行确定性四窗口基线 |
 | `../scripts/run_uncertainty_methods.py` | 按 N 自适应运行 SAA 三折分解、验证、Wilson 汇总与最小达标样本量选择 |
 | `../scripts/run_gamma_ro.py` | 按 Γ 从松到紧运行静态 RO 三折、共同回放、Wilson 汇总、断点恢复与选择 |
+| `../scripts/run_tv_dro.py` | 按ρ从小到大运行有限支持TV-DRO三折、共同回放、Wilson汇总、断点恢复与选择 |
 
 ## 验证代码
 

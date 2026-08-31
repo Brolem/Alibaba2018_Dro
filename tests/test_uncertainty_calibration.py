@@ -8,6 +8,7 @@ from scripts.run_uncertainty_methods import (
     summarize_saa_runs,
     wilson_upper_bound,
 )
+from scripts.run_tv_dro import select_tv_radius, summarize_tv_dro_runs
 
 
 def _run_row(
@@ -74,6 +75,26 @@ class SaaCalibrationTests(unittest.TestCase):
 
         self.assertFalse(selection["target_achieved"])
         self.assertEqual(selection["selected_sample_size"], 50)
+
+
+class TvDroCalibrationTests(unittest.TestCase):
+    def test_selects_smallest_positive_passing_radius(self) -> None:
+        rows: list[dict[str, str]] = []
+        for rho in (0.01, 0.025):
+            for fold in HELD_OUT_FOLDS:
+                for window in range(12):
+                    row = _run_row(20, fold, window)
+                    row.update(
+                        rho=str(rho),
+                        support_size="20",
+                        allowed_training_violation_count="1",
+                    )
+                    rows.append(row)
+        summaries = summarize_tv_dro_runs(rows, rhos=(0.01, 0.025))
+        selection = select_tv_radius(summaries)
+
+        self.assertEqual(selection["selected_rho"], 0.01)
+        self.assertTrue(selection["target_achieved"])
 
 
 if __name__ == "__main__":

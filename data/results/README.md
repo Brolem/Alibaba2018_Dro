@@ -26,6 +26,9 @@
 | `gamma_ro_preflight_grid/` | 旧整数边界诊断；Γ=0 最优，Γ=1/2 不可行，用于证明整数网格过粗 |
 | `gamma_ro_preflight_fractional/` | 分数预算边界诊断；Γ=0.5/0.75 均最优，确认可行边界位于 0.75--1 之间 |
 | `gamma_ro_three_fold/` | 正式静态Γ-RO三折；0.5与0.75各36条窗口均为三类0/36违反，按最小达标正预算规则冻结Γ=0.5 |
+| `tv_dro_preflight/` | TV-DRO单窗口串行追索接口预检；只验证可解性与断点输出，不用于选参 |
+| `tv_dro_preflight_parallel/` | 同一窗口4进程追索预检；结果一致，单窗口由约145秒降至约66.5秒 |
+| `tv_dro_three_fold/` | 正式有限支持TV-DRO三折；ρ=0.01的36窗口全部最优且三类0/36，冻结ρ=0.01 |
 
 当前保留三风险SAA主线结果、静态Γ-RO实现预检和正式三折。三个Γ-RO预检目录每个候选仅含一个窗口，只用于接口、时间和可行边界诊断；正式参数只由 `gamma_ro_three_fold/` 的36窗口汇总选择。八个已停止的碳预算/碳割预检目录已于2026-08-29删除；失败原因的文字摘要保留在 `docs/implementation_log.md`。每个现行目录的 `run_config.json` 固定输入哈希和求解参数。
 
@@ -39,6 +42,9 @@ conda run -n scip_env python scripts/run_four_windows.py
 
 # 静态 Γ-RO 正式三折（默认 Γ=0→0.5→0.75→1.0，自适应停止）
 conda run -n scip_env python scripts/run_gamma_ro.py
+
+# 有限支持 TV-DRO 正式三折（建议直接调用环境内Python，4进程追索）
+& 'C:\Users\Administrator\miniconda3\envs\scip_env\python.exe' scripts/run_tv_dro.py --replay-workers 4
 ```
 
 当前 CSV 是确定性日前基线和实际回放结果；联合残差校准以及 SAA、RO、DRO 的公平比较完成后，再将正式方法对照写入论文结果。
