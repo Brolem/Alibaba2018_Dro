@@ -586,6 +586,52 @@ def load_saa_scenarios(
     return realizations
 
 
+def load_workload_replay_scenarios(
+    *,
+    manifest_path: Path,
+    workload_csv: Path,
+) -> list[ScenarioRealization]:
+    """重建 manifest 中100条2025算力回放轨迹，能源残差留空为零。
+
+    调用方应按具体2025能源窗口，用实际值减预测值替换三类残差；这样同一
+    窗口只是一条能源观测，而100条轨迹仅用于估计算力条件风险。
+    """
+
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    parameters = payload["parameters"]
+    source_days = [int(day) for day in payload["source"]["included_workload_source_days_one_based"]]
+    workload_days = _read_workload_days(workload_csv, source_days)
+    target_total = _finite_float(parameters["target_total_work_core_hours"], label="target_total_work_core_hours")
+    flex_window_hours = int(parameters["flex_window_hours"])
+    expected_hours = int(parameters["hours"])
+    specs = payload["workload_replay_2025"]["scenarios"]
+    zeros = (0.0,) * expected_hours
+    realizations: list[ScenarioRealization] = []
+    for spec in specs:
+        workload_sources = tuple(int(day) for day in spec["workload_source_days_one_based"])
+        cumulative_arrived, cumulative_due = _workload_cumulative_envelopes(
+            workload_days=workload_days,
+            source_days=workload_sources,
+            target_total_work=target_total,
+            flex_window_hours=flex_window_hours,
+        )
+        realizations.append(
+            ScenarioRealization(
+                scenario_id=int(spec["scenario_id"]),
+                workload_source_days_one_based=workload_sources,
+                energy_delivery_dates=(),
+                cumulative_arrived_core_hours=cumulative_arrived,
+                cumulative_due_core_hours=cumulative_due,
+                residual_solar_mwh=zeros,
+                residual_wind_mwh=zeros,
+                residual_carbon_lbs_per_kwh=zeros,
+            )
+        )
+    if len(realizations) != int(payload["workload_replay_2025"]["scenario_count"]):
+        raise ValueError("workload replay manifest count mismatch")
+    return realizations
+
+
 def load_calibration_energy_rows(
     calibration_csv: Path,
     energy_delivery_dates: Sequence[str],

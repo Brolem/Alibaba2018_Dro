@@ -48,3 +48,11 @@ conda run -n scip_env python scripts/run_gamma_ro.py
 ```
 
 当前 CSV 是确定性日前基线和实际回放结果；联合残差校准以及 SAA、RO、DRO 的公平比较完成后，再将正式方法对照写入论文结果。
+
+### `comparison/` 冻结参数比较
+
+`deterministic_2025_workload_replay/` 是改动最小的首个比较实验：每个2025能源窗口只求一次确定性日前计划，再在该窗口实际风光条件下回放100条独立算力轨迹。100条轨迹用于估计该能源窗口下的条件算力风险，不得把四窗口×100轨迹写成400条独立能源观测。
+
+```powershell
+& 'C:\Users\Administrator\miniconda3\envs\scip_env\python.exe' scripts/run_2025_deterministic_workload_replay.py --replay-workers 4
+```

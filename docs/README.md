@@ -98,6 +98,7 @@ flowchart LR
 | `../scripts/run_uncertainty_methods.py` | 按 N 自适应运行 SAA 三折分解、验证、Wilson 汇总与最小达标样本量选择 |
 | `../scripts/run_gamma_ro.py` | 按 Γ 从松到紧运行静态 RO 三折、共同回放、Wilson 汇总、断点恢复与选择 |
 | `../scripts/run_tv_dro.py` | 按ρ从小到大运行有限支持TV-DRO三折、共同回放、Wilson汇总、断点恢复与选择 |
+| `../scripts/run_2025_deterministic_workload_replay.py` | 首个统一比较基线：四个2025能源窗口分别配对100条算力轨迹，按窗口断点输出条件回放结果 |
 
 ## 验证代码
 
