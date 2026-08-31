@@ -145,123 +145,7 @@ class TvDroTests(unittest.TestCase):
             scheduler.tv_dro_allowed_violation_count(20, beta=0.10, rho=0.11)
 
 
-@unittest.skipIf(scheduler.Model is None, "PySCIPOpt is only available in scip_env")
 class MainlineSchedulerTests(unittest.TestCase):
-    @unittest.skipIf(scheduler.gp is None, "Gurobi is not available")
-    def test_scip_and_gurobi_day_ahead_models_are_equivalent(self) -> None:
-        inputs = [
-            _input(
-                0,
-                price=10.0,
-                forecast_carbon=0.5,
-                batch_baseline=1.0,
-                batch_window=1.0,
-                online_mw=1.0,
-                cumulative_arrived=1.0,
-                cumulative_due=0.0,
-                workload_mwh_per_core_hour=1.0,
-            ),
-            _input(
-                1,
-                price=100.0,
-                forecast_carbon=0.5,
-                batch_baseline=0.0,
-                batch_window=1.0,
-                online_mw=1.0,
-                cumulative_arrived=1.0,
-                cumulative_due=0.0,
-                workload_mwh_per_core_hour=1.0,
-            ),
-            _input(
-                2,
-                price=30.0,
-                forecast_carbon=0.5,
-                batch_baseline=0.0,
-                batch_window=1.0,
-                online_mw=1.0,
-                cumulative_arrived=1.0,
-                cumulative_due=1.0,
-                workload_mwh_per_core_hour=1.0,
-            ),
-        ]
-        common = {
-            "g_max_mw": 3.0,
-            "r_max_mw": 3.0,
-            "p_grid_initial_mw": 1.0,
-            "bess_power_mw": 1.0,
-            "bess_energy_mwh": 2.0,
-            "bess_efficiency": 1.0,
-            "soc_min": 0.0,
-            "soc_max": 1.0,
-            "soc_initial": 0.5,
-            "pv_capacity_mw": 0.0,
-            "wind_capacity_mw": 0.0,
-            "carbon_budget_reduction": 0.0,
-            "bess_degradation_cost_usd_per_mwh_throughput": 20.0,
-        }
-        scip_plan = scheduler.solve_wind_solar_storage(
-            inputs, **common, day_ahead_solver="scip"
-        )
-        gurobi_plan = scheduler.solve_wind_solar_storage(
-            inputs, **common, day_ahead_solver="gurobi"
-        )
-        self.assertTrue(scip_plan.feasible and gurobi_plan.feasible)
-        self.assertAlmostEqual(
-            scip_plan.operating_cost, gurobi_plan.operating_cost, places=6
-        )
-        for scip_values, gurobi_values in (
-            (scip_plan.batch, gurobi_plan.batch),
-            (scip_plan.grid, gurobi_plan.grid),
-            (scip_plan.bess_charge, gurobi_plan.bess_charge),
-            (scip_plan.bess_discharge, gurobi_plan.bess_discharge),
-        ):
-            for scip_value, gurobi_value in zip(
-                scip_values, gurobi_values, strict=True
-            ):
-                self.assertAlmostEqual(scip_value, gurobi_value, places=6)
-
-        scenario = ScenarioRealization(
-            scenario_id=0,
-            workload_source_days_one_based=(2,),
-            energy_delivery_dates=("2024-01-01",),
-            cumulative_arrived_core_hours=(1.0, 1.0, 1.0),
-            cumulative_due_core_hours=(0.0, 0.0, 1.0),
-            residual_solar_mwh=(0.0, 0.0, 0.0),
-            residual_wind_mwh=(0.0, 0.0, 0.0),
-            residual_carbon_lbs_per_kwh=(0.0, 0.0, 0.0),
-        )
-        saa_results = {
-            solver: scheduler.solve_saa_wind_solar_storage(
-                inputs,
-                [scenario],
-                **common,
-                beta_workload=0.0,
-                beta_grid=0.0,
-                beta_ramp=0.0,
-                day_ahead_solver=solver,
-                recourse_solver="gurobi",
-            )
-            for solver in ("scip", "gurobi")
-        }
-        self.assertTrue(all(result.feasible for result in saa_results.values()))
-        self.assertAlmostEqual(
-            saa_results["scip"].plan.operating_cost,
-            saa_results["gurobi"].plan.operating_cost,
-            places=6,
-        )
-        self.assertEqual(
-            (
-                saa_results["scip"].workload_violation_rate,
-                saa_results["scip"].grid_limit_violation_rate,
-                saa_results["scip"].ramp_violation_rate,
-            ),
-            (
-                saa_results["gurobi"].workload_violation_rate,
-                saa_results["gurobi"].grid_limit_violation_rate,
-                saa_results["gurobi"].ramp_violation_rate,
-            ),
-        )
-
     def test_saa_workload_chance_constraint_uses_joint_scenario_envelope(self) -> None:
         inputs = [
             _input(
@@ -515,6 +399,70 @@ class MainlineSchedulerTests(unittest.TestCase):
         )
         self.assertTrue(cut_diagnostic.feasible, cut_diagnostic.solver_status)
         self.assertEqual(cut_diagnostic.carbon_cut_violation_lower_bound, 1)
+
+    def test_recourse_minimizes_dam_cost_before_batch_adjustment(self) -> None:
+        planning_inputs = [
+            _input(
+                0,
+                price=1.0,
+                forecast_carbon=0.5,
+                batch_baseline=1.0,
+                batch_window=1.0,
+                workload_mwh_per_core_hour=1.0,
+            ),
+            _input(
+                1,
+                price=10.0,
+                forecast_carbon=0.5,
+                batch_baseline=0.0,
+                batch_window=1.0,
+                workload_mwh_per_core_hour=1.0,
+            ),
+        ]
+        plan = scheduler.solve_wind_solar_storage(
+            planning_inputs,
+            g_max_mw=2.0,
+            r_max_mw=2.0,
+            p_grid_initial_mw=0.0,
+            bess_power_mw=0.0,
+            bess_energy_mwh=0.0,
+            pv_capacity_mw=0.0,
+            wind_capacity_mw=0.0,
+        )
+        self.assertAlmostEqual(plan.batch[0], 1.0, places=6)
+        replay_inputs = [
+            replace(planning_inputs[0], dam_lz_houston_usd_per_mwh=10.0),
+            replace(planning_inputs[1], dam_lz_houston_usd_per_mwh=1.0),
+        ]
+        scenario = ScenarioRealization(
+            scenario_id=0,
+            workload_source_days_one_based=(2,),
+            energy_delivery_dates=("2025-01-01",),
+            cumulative_arrived_core_hours=(1.0, 1.0),
+            cumulative_due_core_hours=(0.0, 1.0),
+            residual_solar_mwh=(0.0, 0.0),
+            residual_wind_mwh=(0.0, 0.0),
+            residual_carbon_lbs_per_kwh=(0.0, 0.0),
+        )
+        replay = scheduler.replay_joint_scenario_with_batch_recourse(
+            replay_inputs,
+            plan,
+            scenario,
+            pv_capacity_mw=0.0,
+            wind_capacity_mw=0.0,
+            g_max_mw=2.0,
+            r_max_mw=2.0,
+            p_grid_initial_mw=0.0,
+            recourse_solver="gurobi",
+        )
+        self.assertAlmostEqual(replay.batch[0], 0.0, places=5)
+        self.assertAlmostEqual(replay.batch[1], 1.0, places=5)
+        self.assertAlmostEqual(replay.grid_cost, 1.0, places=5)
+        self.assertAlmostEqual(replay.batch_adjustment_mwh, 2.0, places=5)
+
+    def test_removed_scip_solver_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must be 'gurobi'"):
+            scheduler._day_ahead_model("removed_scip", "scip")
 
     def test_cumulative_envelope_prevents_early_and_late_batch_execution(self) -> None:
         inputs = [

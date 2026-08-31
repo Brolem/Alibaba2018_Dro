@@ -30,7 +30,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--day-ahead-solver",
-        choices=("scip", "gurobi"),
+        choices=("gurobi",),
         default="gurobi",
     )
     args = parser.parse_args()

@@ -1,6 +1,6 @@
 # 实验结果（results）
 
-本目录保存调度与实际回放的指标输出，并与 `docs/results.md`、`docs/paper_tables_figures.md` 对应。当前主线优化运行成本并评价算力包络、并网和爬坡三类风险；实际碳排放只作环境绩效。旧 PV+BESS 与碳预算结果仅保留为档案。
+本目录保存调度与实际回放的指标输出，并与 `docs/research/results.md`、`docs/research/paper_tables_figures.md` 对应。当前主线优化运行成本并评价算力包络、并网和爬坡三类风险；实际碳排放只作环境绩效。旧 PV+BESS 与碳预算结果仅保留为档案。
 
 | 文件 | 生成脚本 | 内容 |
 | --- | --- | --- |
@@ -30,29 +30,31 @@
 | `tv_dro_preflight_parallel/` | 同一窗口4进程追索预检；结果一致，单窗口由约145秒降至约66.5秒 |
 | `tv_dro_three_fold/` | 正式有限支持TV-DRO三折；ρ=0.01的36窗口全部最优且三类0/36，冻结ρ=0.01 |
 
-当前保留三风险SAA主线结果、静态Γ-RO实现预检和正式三折。三个Γ-RO预检目录每个候选仅含一个窗口，只用于接口、时间和可行边界诊断；正式参数只由 `gamma_ro_three_fold/` 的36窗口汇总选择。八个已停止的碳预算/碳割预检目录已于2026-08-29删除；失败原因的文字摘要保留在 `docs/implementation_log.md`。每个现行目录的 `run_config.json` 固定输入哈希和求解参数。
+当前保留三风险SAA主线结果、静态Γ-RO实现预检和正式三折。三个Γ-RO预检目录每个候选仅含一个窗口，只用于接口、时间和可行边界诊断；正式参数只由 `gamma_ro_three_fold/` 的36窗口汇总选择。八个已停止的碳预算/碳割预检目录已于2026-08-29删除；失败原因的文字摘要保留在 `docs/reproduction/implementation_log.md`。每个现行目录的 `run_config.json` 固定输入哈希和求解参数。
 
 `operating_cost_usd` 与 `actual_operating_cost_usd` 仅含购电成本和 BESS 吞吐衰减成本；风光与储能固定运维成本及年化投资成本不在该 CSV 中。主比较固定资产配置，故这些成本为各方法相同常数，也不参与 `cost_reduction`。
 
 ## 复现命令
 
 ```powershell
-# 默认需 scip_env（Gurobi）；SCIP 仅作显式对照
-conda run -n scip_env python scripts/run_four_windows.py
+# 当前统一使用 gurobi_env
+conda run -n gurobi_env python scripts/run_four_windows.py
 
 # 静态 Γ-RO 正式三折（默认 Γ=0→0.5→0.75→1.0，自适应停止）
-conda run -n scip_env python scripts/run_gamma_ro.py
+conda run -n gurobi_env python scripts/run_gamma_ro.py
 
 # 有限支持 TV-DRO 正式三折（建议直接调用环境内Python，4进程追索）
-& 'C:\Users\Administrator\miniconda3\envs\scip_env\python.exe' scripts/run_tv_dro.py --replay-workers 4
+& 'C:\Users\Administrator\miniconda3\envs\gurobi_env\python.exe' scripts/run_tv_dro.py --replay-workers 4
 ```
 
 当前 CSV 是确定性日前基线和实际回放结果；联合残差校准以及 SAA、RO、DRO 的公平比较完成后，再将正式方法对照写入论文结果。
 
 ### `comparison/` 冻结参数比较
 
-`deterministic_2025_workload_replay/` 是改动最小的首个比较实验：每个2025能源窗口只求一次确定性日前计划，再在该窗口实际风光条件下回放100条独立算力轨迹。100条轨迹用于估计该能源窗口下的条件算力风险，不得把四窗口×100轨迹写成400条独立能源观测。
+`deterministic_2025_workload_replay/` 保留首次比较实验：每个2025能源窗口只求一次确定性日前计划，再在该窗口实际风光条件下回放100条算力轨迹。该目录使用旧的“风险→调整→总购电”追索口径，只作历史过程证据；结果解读见 `docs/research/current_results.md`。
+
+新口径重跑默认输出到 `deterministic_2025_workload_replay_cost_first/`，`run_config.json` 会显式记录四级词典序“风险→DAM购电成本→批处理调整→总购电”。无论新旧口径，100条轨迹只用于估计该能源窗口下的条件算力风险，不得把四窗口×100轨迹写成400条独立能源观测。
 
 ```powershell
-& 'C:\Users\Administrator\miniconda3\envs\scip_env\python.exe' scripts/run_2025_deterministic_workload_replay.py --replay-workers 4
+& 'C:\Users\Administrator\miniconda3\envs\gurobi_env\python.exe' scripts/run_2025_deterministic_workload_replay.py --replay-workers 4
 ```

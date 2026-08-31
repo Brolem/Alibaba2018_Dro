@@ -391,12 +391,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--day-ahead-solver",
-        choices=("scip", "gurobi"),
+        choices=("gurobi",),
         default="gurobi",
     )
     parser.add_argument(
         "--recourse-solver",
-        choices=("scip", "gurobi"),
+        choices=("gurobi",),
         default="gurobi",
     )
     args = parser.parse_args()

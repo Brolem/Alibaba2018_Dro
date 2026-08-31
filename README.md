@@ -2,7 +2,7 @@
 
 > **研究设计 v3（当前主线）**：研究**联合算力、风电和光伏不确定性**下，风光储与柔性批处理负载的日前协同调度，在降低运行成本的同时控制算力包络、并网容量和爬坡风险。碳强度只用于核算剩余购电的环境绩效，不进入目标函数、约束或可靠性判定。
 >
-> **实现状态（必须区分）**：确定性日前MILP、实际回放、2024校准日块、SAA manifest、有限批处理追索、活动场景分解、静态Γ-RO和有限支持TV-DRO已实现，日前与追索主线均默认使用Gurobi，并保留显式SCIP对照路径。当前代码默认关闭碳预算及碳机会约束，三种不确定性方法均按算力包络、并网和爬坡风险校准；已冻结N=20、Γ=0.5和ρ=0.01。尚未完成冻结参数下的统一2025比较，当前校准证据不能作为方法优劣结论。
+> **实现状态（必须区分）**：确定性日前MILP、实际回放、2024校准日块、SAA manifest、有限批处理追索、活动场景分解、静态Γ-RO和有限支持TV-DRO已实现，日前与追索主线已统一使用Gurobi，不再提供SCIP运行入口。当前代码默认关闭碳预算及碳机会约束，三种不确定性方法均按算力包络、并网和爬坡风险校准；已冻结N=20、Γ=0.5和ρ=0.01。尚未完成新追索词典序下的统一2025比较，当前校准证据不能作为方法优劣结论。
 
 ## 1. 研究问题与边界
 
@@ -36,7 +36,7 @@
 
 - 电价：ERCOT `LZ_HOUSTON` 日前电价。
 - 实际系统信号：EIA ERCO 的 `erco_solar_generation_mwh`、`erco_wind_generation_mwh` 和 `erco_consumed_co2_intensity_lbs_per_kwh`。
-- 日前信号：`forecast_erco_*` 由滚动 Ridge 预测器从保护期前的同类实际历史生成，**不是**交割时段实际值的复制。详见 [docs/forecasting.md](docs/forecasting.md)。
+- 日前信号：`forecast_erco_*` 由滚动 Ridge 预测器从保护期前的同类实际历史生成，**不是**交割时段实际值的复制。详见 [docs/research/forecasting.md](docs/research/forecasting.md)。
 
 系统风光仅被用作本地反事实资源的**出力形状代理**。本地容量由场景参数给定，缩放参考值必须在训练/标定期固定，不能按每个 30 天窗口各自峰值归一化。
 
@@ -53,7 +53,7 @@
 
 ### 4.1 有效回放容量
 
-Alibaba 的计划/预留资源在聚合后不与物理核数闭合。当前实现以 $C^{eff}=\kappa C^{physical}$ 和统一缩放建立在线/批处理代理的容量闭合，再将固定在线预留代入共享容量约束。该做法是情景归一化，不是实测利用率恢复；当前 $\kappa\in\{0.6,0.7,0.8\}$ 会同步改变有效系统规模与回放工作量，不能解释为固定需求下的纯容量收紧。完整推导见 [docs/compute_envelope.md](docs/compute_envelope.md)。
+Alibaba 的计划/预留资源在聚合后不与物理核数闭合。当前实现以 $C^{eff}=\kappa C^{physical}$ 和统一缩放建立在线/批处理代理的容量闭合，再将固定在线预留代入共享容量约束。该做法是情景归一化，不是实测利用率恢复；当前 $\kappa\in\{0.6,0.7,0.8\}$ 会同步改变有效系统规模与回放工作量，不能解释为固定需求下的纯容量收紧。完整推导见 [docs/research/compute_envelope.md](docs/research/compute_envelope.md)。
 
 ### 4.2 双侧不确定性
 
@@ -87,7 +87,7 @@ c_{\mathrm{deg}}
 
 本文研究既定风光储配置下的调度，不作容量投资决策。因此，风光与储能的固定运维成本及年化投资成本均不计入目标函数和成本降低率；在主比较中它们对所有方法都是相同常数。这里的成本仅指调度相关运行成本，不能解释为全生命周期或平准化成本。
 
-完整目标模型与不确定集见 [docs/model.md](docs/model.md)。
+完整目标模型与不确定集见 [docs/research/model.md](docs/research/model.md)。
 
 ## 5. 实验设计
 
@@ -126,11 +126,11 @@ c_{\mathrm{deg}}
 ## 8. 文档索引
 
 - [docs/README.md](docs/README.md)：项目文件导航、文档分工与文件管理规则。
-- [docs/design.md](docs/design.md)：实现边界、数据接口与待实现任务。
-- [docs/implementation_log.md](docs/implementation_log.md)：逐次实现、执行命令、失败原因与验证证据。
-- [docs/model.md](docs/model.md)：成本目标、三类运行可靠性与联合不确定集。
-- [docs/compute_envelope.md](docs/compute_envelope.md)：算力包络、有效容量、单位转换及代码数据流的完整推导。
-- [docs/forecasting.md](docs/forecasting.md)：无泄漏预测、实际回放和残差标定口径。
-- [docs/data_feasibility.md](docs/data_feasibility.md)：Alibaba v2018/GPU v2020 可行性、7日训练场景池与30天公共测试实例的边界。
-- [docs/results.md](docs/results.md)：现有 PV+BESS 开发原型结果档案。
-- [docs/paper_tables_figures.md](docs/paper_tables_figures.md)：主线完成后应产出的论文图表。
+- [docs/reproduction/design.md](docs/reproduction/design.md)：实现边界、数据接口与待实现任务。
+- [docs/reproduction/implementation_log.md](docs/reproduction/implementation_log.md)：逐次实现、执行命令、失败原因与验证证据。
+- [docs/research/model.md](docs/research/model.md)：成本目标、三类运行可靠性与联合不确定集。
+- [docs/research/compute_envelope.md](docs/research/compute_envelope.md)：算力包络、有效容量、单位转换及代码数据流的完整推导。
+- [docs/research/forecasting.md](docs/research/forecasting.md)：无泄漏预测、实际回放和残差标定口径。
+- [docs/research/data_feasibility.md](docs/research/data_feasibility.md)：Alibaba v2018/GPU v2020 可行性、7日训练场景池与30天公共测试实例的边界。
+- [docs/research/results.md](docs/research/results.md)：现有 PV+BESS 开发原型结果档案。
+- [docs/research/paper_tables_figures.md](docs/research/paper_tables_figures.md)：主线完成后应产出的论文图表。

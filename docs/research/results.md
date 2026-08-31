@@ -1,6 +1,6 @@
 # 开发原型结果档案（PV+BESS，非主线最终结果）
 
-> **用途限制**：本文件只保存旧 PV+BESS、碳预算和早期 SAA/Γ-RO 原型结果，用于迁移前回归与失败复现。其能源模型、成本口径和可靠性指标均不同于当前“联合算力与风光不确定性下的成本—运行可靠性”主线，不得作为正式论文结果。现有 `four_windows_mainline_summary.csv` 同样是目标切换前的历史输出；正式结果须按 [model.md](model.md) 和 [paper_tables_figures.md](paper_tables_figures.md) 重跑。详细目标切换记录见 [implementation_log.md](implementation_log.md)。
+> **用途限制**：本文件只保存旧 PV+BESS、碳预算和早期 SAA/Γ-RO 原型结果，用于迁移前回归与失败复现。其能源模型、成本口径和可靠性指标均不同于当前“联合算力与风光不确定性下的成本—运行可靠性”主线，不得作为正式论文结果。现有 `four_windows_mainline_summary.csv` 同样是目标切换前的历史输出；正式结果须按 [model.md](model.md) 和 [paper_tables_figures.md](paper_tables_figures.md) 重跑。详细目标切换记录见 [implementation_log.md](../reproduction/implementation_log.md)。
 
 ## 1. 算力侧 workload 特征（Alibaba cluster-trace-v2018，8 天）
 

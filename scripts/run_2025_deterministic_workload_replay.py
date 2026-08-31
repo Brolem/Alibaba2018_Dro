@@ -66,7 +66,7 @@ def main() -> None:
     parser.add_argument("--aggregate-workload-csv", type=Path, default=DATA_PROCESSED / "workload" / "aggregate_workload_8d.csv")
     parser.add_argument("--envelope-csv", type=Path, default=DATA_PROCESSED / "workload" / "nominal_workload_30d.csv")
     parser.add_argument("--stats-json", type=Path, default=DATA_PROCESSED / "workload" / "workload_stats.json")
-    parser.add_argument("--output-directory", type=Path, default=DATA_RESULTS / "comparison" / "deterministic_2025_workload_replay")
+    parser.add_argument("--output-directory", type=Path, default=DATA_RESULTS / "comparison" / "deterministic_2025_workload_replay_cost_first")
     parser.add_argument("--windows", nargs="+", choices=WINDOWS, default=list(WINDOWS))
     parser.add_argument("--replay-workers", type=int, default=4)
     args = parser.parse_args()
@@ -78,10 +78,22 @@ def main() -> None:
     run_path = args.output_directory / "replay_runs.csv"
     window_files = {window: DATA_PROCESSED / "energy" / "windows" / f"{window}_30d_d168_h3_energy.csv" for window in args.windows}
     config = {
-        "schema_version": 1,
+        "schema_version": 2,
         "method": "deterministic_2025_workload_replay",
         "interpretation": "four energy observations; 100 workload trajectories are conditional replays, not 400 independent energy samples",
-        "parameters": {"windows": list(args.windows), "workload_replay_count": 100, "replay_workers": args.replay_workers, "day_ahead_solver": "gurobi", "recourse_solver": "gurobi"},
+        "parameters": {
+            "windows": list(args.windows),
+            "workload_replay_count": 100,
+            "replay_workers": args.replay_workers,
+            "day_ahead_solver": "gurobi",
+            "recourse_solver": "gurobi",
+            "recourse_lexicographic_order": [
+                "operational_risk",
+                "dam_grid_cost",
+                "batch_adjustment",
+                "total_grid_import",
+            ],
+        },
         "source_sha256": {
             "manifest": _sha256(args.manifest), "aggregate_workload": _sha256(args.aggregate_workload_csv),
             "nominal_workload": _sha256(args.envelope_csv), "workload_stats": _sha256(args.stats_json),

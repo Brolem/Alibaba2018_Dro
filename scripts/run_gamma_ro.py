@@ -232,10 +232,10 @@ def main() -> None:
     )
     parser.add_argument("--time-limit-seconds", type=float, default=None)
     parser.add_argument(
-        "--day-ahead-solver", choices=("scip", "gurobi"), default="gurobi"
+        "--day-ahead-solver", choices=("gurobi",), default="gurobi"
     )
     parser.add_argument(
-        "--recourse-solver", choices=("scip", "gurobi"), default="gurobi"
+        "--recourse-solver", choices=("gurobi",), default="gurobi"
     )
     args = parser.parse_args()
 

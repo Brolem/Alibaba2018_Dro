@@ -1,0 +1,5 @@
+method,window,workload_replay_count,mean_actual_operating_cost_usd,mean_actual_carbon_kg,workload_violation_count,grid_limit_violation_count,ramp_violation_count
+deterministic,2025-01-01,100,16563.36030437196,204068.32893559308,0,0,0
+deterministic,2025-04-01,100,16617.354105143706,126218.61154879924,0,0,0
+deterministic,2025-07-01,100,17350.108146843166,172391.8538590119,0,0,0
+deterministic,2025-10-01,100,17320.0217508404,174697.053382261,1,0,0

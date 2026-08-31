@@ -79,9 +79,9 @@ flowchart LR
 | `../alibaba2018_dro/inputs.py` | 把能源、容量和 workload 包络对齐为小时模型输入 |
 | `../alibaba2018_dro/residuals.py` | 生成风、光、碳联合残差日块与季节折 |
 | `../alibaba2018_dro/scenarios.py` | 读取 manifest，重建 SAA/RO 场景并计算训练折小时位置风光下偏分位 |
-| `../alibaba2018_dro/scheduler.py` | 共享模型表达式的 Gurobi 默认/SCIP 可选确定性、SAA、静态 Γ-RO、有限支持 TV-DRO、三类运行风险追索与实际回放；碳排放事后核算 |
+| `../alibaba2018_dro/scheduler.py` | 统一使用 Gurobi 的确定性、SAA、静态 Γ-RO、有限支持 TV-DRO、三类运行风险追索与实际回放；碳排放事后核算 |
 
-更详细的数据流见 `../alibaba2018_dro/README.md`。`scheduler.py` 当前主线使用 Gurobi，薄适配层使 SCIP 对照复用同一套变量、目标和约束表达式；碳排放 LP 对偶割另外使用 SciPy/HiGHS。
+更详细的数据流见 `../alibaba2018_dro/README.md`。`scheduler.py` 的日前与追索模型统一使用 Gurobi；碳排放 LP 对偶割仅在历史诊断模式下另外使用 SciPy/HiGHS。
 
 ## 执行脚本
 
@@ -106,7 +106,7 @@ flowchart LR
 | --- | --- |
 | `../tests/test_energy_inputs.py` | 数据时间切分、预测保护、窗口和价格输入 |
 | `../tests/test_energy_residuals.py` | 联合残差、季节折和缺失日处理 |
-| `../tests/test_mainline_scheduler.py` | 优化约束、BESS、SAA 追索、Γ 支持函数与边界、SCIP/Gurobi 等价性和碳对偶割 |
+| `../tests/test_mainline_scheduler.py` | Gurobi 优化约束、BESS、SAA 追索、四级词典序、Γ 支持函数与边界和碳对偶割 |
 | `../tests/test_scenarios.py` | 校准表与 manifest 可重建性 |
 | `../tests/test_uncertainty_calibration.py` | Wilson 门槛、汇总和样本选择规则 |
 | `../tests/test_workload_scenarios.py` | 工作量守恒、柔性包络和名义场景平衡 |
@@ -122,41 +122,56 @@ flowchart LR
 
 ## 文档索引
 
-各文档职责与“给谁看”：
+文档按用途分为两类，分别放在 `research/` 和 `reproduction/`。本文件保留在 `docs/` 根目录作为唯一总导航。
 
-| 文档 | 职责 | 给谁看 |
-| --- | --- | --- |
-| `../README.md` | 已确认研究主线、数据边界、实验设计与当前实现状态 | 所有人 |
-| `design.md` | 目标模型的实现边界、数据接口与迁移顺序 | 复现 / 维护 |
-| `model.md` | 成本目标、风光储和联合不确定性的主模型数学公式 | 写论文 / 实现 |
-| `compute_envelope.md` | 算力包络、有效容量、单位转换及对应代码数据流的完整推导 | 写论文 / 读代码 |
-| `implementation_log.md` | 每次代码实现、执行命令、失败原因、改进措施与验证证据 | 复现 / 维护 |
-| `results.md` | 旧 PV+BESS 开发原型结果档案，不是主线论文结果 | 回归对照 |
-| `paper_tables_figures.md` | 主线完成后应生成的论文图表与统一报告口径 | 写论文 |
-| `forecasting.md` | 无泄漏预测、联合残差和实际回放口径 | 预测 / 回测 |
-| `../data/README.md` | 原始/处理/结果三层数据边界 | 复现 |
-| `../data/raw/energy/README.md` | 能源原始数据来源与哈希 | 复现 |
-| `../data/raw/workload/README.md` | Alibaba v2018 下载与字段 | 复现 |
-| `../data/processed/energy/README.md` | 能源派生输入（年度表 + 窗口） | 复现 |
-| `../data/processed/workload/README.md` | 算力侧派生输入（包络/不确定集） | 复现 |
-| `../data/results/README.md` | 实验结果文件与复现命令 | 写论文 / 复现 |
-| `../alibaba2018_dro/README.md` | 代码模块职责与数据流 | 读代码 |
+### A. 研究论证类
+
+面向论文写作、模型解释和结果讨论，正文只保留稳定定义与可引用结论。
+
+| 文档 | 职责 |
+| --- | --- |
+| `../README.md` | 研究问题、当前边界与总进度 |
+| [`research/model.md`](research/model.md) | 成本目标、联合不确定性和追索词典序的正式数学定义 |
+| [`research/uncertainty_explained.md`](research/uncertainty_explained.md) | 不确定性如何进入约束并影响成本的学习型解释 |
+| [`research/compute_envelope.md`](research/compute_envelope.md) | 算力包络、有效容量、聚合边界及完整推导 |
+| [`research/forecasting.md`](research/forecasting.md) | 无泄漏预测、联合残差与实际回放口径 |
+| [`research/data_feasibility.md`](research/data_feasibility.md) | 数据能支持和不能支持的论文主张 |
+| [`research/current_results.md`](research/current_results.md) | 当前主线结果、口径修正与可用结论边界 |
+| [`research/paper_tables_figures.md`](research/paper_tables_figures.md) | 正式统一比较需要的论文图表和报告字段 |
+| [`research/results.md`](research/results.md) | 旧 PV+BESS 开发原型档案，仅作回归对照 |
+
+### B. 实现复现类
+
+面向代码执行、数据追踪和维护，记录入口、参数、哈希、变更与历史证据。
+
+| 文档或导航 | 职责 |
+| --- | --- |
+| [`reproduction/design.md`](reproduction/design.md) | 实现边界、模块接口、实验顺序和完成门槛 |
+| [`reproduction/implementation_log.md`](reproduction/implementation_log.md) | 每次实现、命令、失败原因、修正和验证证据 |
+| `../alibaba2018_dro/README.md` | 代码模块职责和调用关系 |
+| `../data/README.md` | raw / processed / results 三层数据边界 |
+| `../data/raw/energy/README.md` | 能源原始数据来源与哈希 |
+| `../data/raw/workload/README.md` | Alibaba v2018 原始字段和下载说明 |
+| `../data/processed/energy/README.md` | 能源派生数据与窗口文件 |
+| `../data/processed/workload/README.md` | 算力派生数据、包络与场景 |
+| `../data/results/README.md` | 结果目录、历史/当前口径和复现命令 |
 
 分工原则：
 
 - `../README.md` = “做什么、为什么、研究边界和当前状态”；
-- `design.md` = “目标如何实现、当前差距和实施顺序”；
-- `model.md` = “目标数学模型与不确定性定义”；
-- `compute_envelope.md` = “算力包络和容量如何从数据推导并由代码实现”；
-- `implementation_log.md` = “每次实际改了什么、如何验证、失败后如何改进”；
-- `results.md` = “旧原型跑了什么，仅可作回归对照”。
+- `reproduction/design.md` = “目标如何实现、当前差距和实施顺序”；
+- `research/model.md` = “目标数学模型与不确定性定义”；
+- `research/compute_envelope.md` = “算力包络和容量如何从数据推导并由代码实现”；
+- `research/uncertainty_explained.md` = “不确定性作用在哪里，以及为什么会改变成本”；
+- `reproduction/implementation_log.md` = “每次实际改了什么、如何验证、失败后如何改进”；
+- `research/results.md` = “旧原型跑了什么，仅可作回归对照”。
 
-当前确定性主线的机器可读结果保存在 `../data/results/four_windows_mainline_summary.csv`；联合不确定性方法完成同口径比较后，再将正式论文结果写入 `results.md`。公式只放 `model.md`。
+当前确定性主线的机器可读结果保存在 `../data/results/four_windows_mainline_summary.csv`；联合不确定性方法完成同口径比较后，再将正式论文结果写入 `research/results.md`。公式只放 `research/model.md`。
 
 文件管理规则：
 
 1. 优先修改职责相符的现有文件，不为单次实验复制模型或说明文档。
-2. 每次实现必须更新 `implementation_log.md`；数学定义稳定后才更新 `model.md`，阶段能力变化时更新 `design.md`。
+2. 每次实现必须更新 `reproduction/implementation_log.md`；数学定义稳定后才更新 `research/model.md`，阶段能力变化时更新 `reproduction/design.md`。
 3. 生成数据放入 `data/processed/`，实验输出放入 `data/results/`；每种预检配置使用独立结果目录，不覆盖历史证据。
 4. 正式实验结果至少保留运行配置、随机种子或 manifest、输入哈希和结果表；失败预检必须标明不可用于论文结论。
 5. 同一事实只在一处详细维护，其它文件用链接和一句摘要导航。
