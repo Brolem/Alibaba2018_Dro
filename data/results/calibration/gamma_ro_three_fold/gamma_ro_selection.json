@@ -1,0 +1,59 @@
+{
+  "candidate_order": [
+    0.5,
+    0.75
+  ],
+  "candidate_summaries": [
+    {
+      "canonical_36_window_validation": true,
+      "effective_gamma": 0.5,
+      "gamma": 0.5,
+      "grid_limit_violation_count": 0,
+      "grid_limit_violation_rate": 0.0,
+      "grid_limit_wilson_upper_95": 0.06990067087687767,
+      "max_wilson_upper_95": 0.06990067087687767,
+      "mean_actual_operating_cost_usd": 14513.997203948835,
+      "mean_nominal_operating_cost_usd": 13128.341968933479,
+      "mean_solver_runtime_seconds": 18.044999996821087,
+      "meets_90pct_target": true,
+      "method": "static_Gamma_RO",
+      "optimal_solve_count": 36,
+      "ramp_violation_count": 0,
+      "ramp_violation_rate": 0.0,
+      "ramp_wilson_upper_95": 0.06990067087687767,
+      "validation_window_count": 36,
+      "workload_violation_count": 0,
+      "workload_violation_rate": 0.0,
+      "workload_wilson_upper_95": 0.06990067087687767
+    },
+    {
+      "canonical_36_window_validation": true,
+      "effective_gamma": 0.75,
+      "gamma": 0.75,
+      "grid_limit_violation_count": 0,
+      "grid_limit_violation_rate": 0.0,
+      "grid_limit_wilson_upper_95": 0.06990067087687767,
+      "max_wilson_upper_95": 0.06990067087687767,
+      "mean_actual_operating_cost_usd": 14483.368849788825,
+      "mean_nominal_operating_cost_usd": 13128.341968933479,
+      "mean_solver_runtime_seconds": 18.952916661898296,
+      "meets_90pct_target": true,
+      "method": "static_Gamma_RO",
+      "optimal_solve_count": 36,
+      "ramp_violation_count": 0,
+      "ramp_violation_rate": 0.0,
+      "ramp_wilson_upper_95": 0.06990067087687767,
+      "validation_window_count": 36,
+      "workload_violation_count": 0,
+      "workload_violation_rate": 0.0,
+      "workload_wilson_upper_95": 0.06990067087687767
+    }
+  ],
+  "method": "static_Gamma_RO",
+  "run_config_sha256": "81F3C60851AE350E6B2C95193EFE141727180CB19C6AB437619490E0285917D6",
+  "run_results_sha256": "CC90752E561EAB37771CA403A0B21C0FE425512BD5F8588352016C9E5F196BF3",
+  "schema_version": 1,
+  "selected_gamma": 0.5,
+  "selection_mode": "full_grid",
+  "target_achieved": true
+}

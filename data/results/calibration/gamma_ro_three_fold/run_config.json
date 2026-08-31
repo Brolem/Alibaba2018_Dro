@@ -1,0 +1,29 @@
+{
+  "method": "static_Gamma_RO",
+  "parameters": {
+    "candidate_order": [
+      0.5,
+      0.75
+    ],
+    "day_ahead_solver": "gurobi",
+    "energy_quantile": 0.9,
+    "folds": [
+      "fold_1",
+      "fold_2",
+      "fold_3"
+    ],
+    "max_windows_per_fold": 12,
+    "recourse_solver": "gurobi",
+    "sample_size": 20,
+    "selection_mode": "full_grid",
+    "time_limit_seconds": 300.0
+  },
+  "schema_version": 1,
+  "source_sha256": {
+    "aggregate_workload": "59A80BBB434AF8E27BF47920CBF62190E8631175E01B3F5CEA8F28D4E7973CAB",
+    "calibration_day_blocks": "585CFEC3EDC8FE651D65A7E9B2908F954078986EA3C0D7D4C74C7481BFD366ED",
+    "manifest": "5FB3F06DACA45991FAFA1B33CF14BE017608C0DEAA06611E59C94981A390351A",
+    "nominal_workload": "91E67548DDBF8B1A94E720B8ECF1F6E73584FA6868199EC3728584DD2D05EC5A",
+    "workload_stats": "37705A3DB357E5CC42B0D6332FFEC543365C59E01FD5B5B22CB7BFBAAB4AFFFB"
+  }
+}

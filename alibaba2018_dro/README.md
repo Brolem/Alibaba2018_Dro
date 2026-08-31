@@ -10,8 +10,8 @@
 | `forecasting.py` | 48h 保护的 Ridge 预测器（numpy） |
 | `energy.py` | 构造 1062h 论文窗口输入与清单 |
 | `residuals.py` | 生成风光碳联合残差、可用日块和季节平衡折 |
-| `scenarios.py` | 从 manifest 重建 SAA 训练、验证和回放场景 |
-| `scheduler.py` | SCIP 确定性/SAA 日前模型、SCIP/Gurobi 可选有限批处理追索、三类运行风险和实际回放；碳割仅供历史诊断复现 |
+| `scenarios.py` | 从 manifest 重建 SAA/RO 训练、验证和回放场景，计算训练折小时位置风光下偏分位 |
+| `scheduler.py` | 共享数学表达式的 Gurobi 默认、SCIP 可选确定性/SAA/静态 Γ-RO 日前模型与有限批处理追索，三类运行风险和实际回放；碳割仅供历史诊断复现 |
 
 数据流：
 
@@ -26,9 +26,9 @@ batch_task（data/raw/workload）
 窗口 CSV + 所有方法共用的 30 天名义累计柔性包络 + 在线核数 → inputs.HourlyInput → scheduler → 结果（data/results）
 ```
 
-确定性入口是 `scripts/run_four_windows.py`；SAA 校准、验证和回放入口是 `scripts/run_uncertainty_methods.py`。当前主线不循环碳预算，碳排放只在求解后核算。
+确定性入口是 `scripts/run_four_windows.py`；SAA 校准入口是 `scripts/run_uncertainty_methods.py`；静态 Γ-RO 校准入口是 `scripts/run_gamma_ro.py`。三者默认使用 Gurobi 日前主问题，SAA/验证追索也默认使用 Gurobi；可通过 `--day-ahead-solver scip` 或 `--recourse-solver scip` 显式复现对照。Γ-RO 数据流为“校准表训练折 → 24 小时位置下偏分位 → 本地 MW 偏差 → Γ 支持函数 + 完整算力包络 → 日前计划 → 共同验证回放”。当前主线不循环碳预算，碳排放只在求解后核算。
 
 运行环境：
 
-- `scheduler.py` 需 `scip_env`（PySCIPOpt）；仅复现历史碳对偶割时还需 SciPy/HiGHS；
+- `scheduler.py` 当前主线需 `scip_env` 中的 Gurobi 13.0.x；SCIP 对照需 PySCIPOpt，仅复现历史碳对偶割时还需 SciPy/HiGHS；
 - 其余模块 numpy / 标准库即可。

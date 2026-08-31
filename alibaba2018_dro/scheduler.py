@@ -37,6 +37,103 @@ except ImportError:  # pragma: no cover
 LBS_PER_KG = 0.45359237
 
 
+class _GurobiModelAdapter:
+    """把当前主问题使用的少量 PySCIPOpt 接口映射到 Gurobi。"""
+
+    def __init__(self, name: str) -> None:
+        if gp is None:  # pragma: no cover - 由模型工厂提前检查
+            raise RuntimeError("gurobipy is required for day_ahead_solver='gurobi'")
+        self._model = gp.Model(name)
+        self._model.Params.OutputFlag = 0
+        self._model.Params.Threads = 1
+        self._model.Params.FeasibilityTol = 1e-8
+        self._model.Params.IntFeasTol = 1e-8
+        self._model.Params.OptimalityTol = 1e-8
+        self._total_runtime_seconds = 0.0
+
+    def hideOutput(self) -> None:
+        self._model.Params.OutputFlag = 0
+
+    def setRealParam(self, name: str, value: float) -> None:
+        if name != "limits/time":
+            raise ValueError(f"unsupported Gurobi real parameter mapping: {name}")
+        self._model.Params.TimeLimit = value
+
+    def addVar(self, **kwargs: object) -> object:
+        return self._model.addVar(**kwargs)
+
+    def addCons(self, constraint: object, name: str | None = None) -> object:
+        if name is None:
+            return self._model.addConstr(constraint)
+        return self._model.addConstr(constraint, name=name)
+
+    def setObjective(self, expression: object, sense: str) -> None:
+        if sense != "minimize":
+            raise ValueError("only minimization is supported")
+        self._model.setObjective(expression, gp.GRB.MINIMIZE)
+
+    def createPartialSol(self) -> list[tuple[object, float]]:
+        return []
+
+    def setSolVal(
+        self,
+        solution: list[tuple[object, float]],
+        variable: object,
+        value: float,
+    ) -> None:
+        solution.append((variable, value))
+
+    def addSol(self, solution: list[tuple[object, float]]) -> None:
+        for variable, value in solution:
+            variable.Start = value
+
+    def optimize(self) -> None:
+        self._model.optimize()
+        self._total_runtime_seconds += self._model.Runtime
+
+    def getStatus(self) -> str:
+        statuses = {
+            gp.GRB.OPTIMAL: "optimal",
+            gp.GRB.TIME_LIMIT: "timelimit",
+            gp.GRB.INFEASIBLE: "infeasible",
+            gp.GRB.INF_OR_UNBD: "inforunbd",
+            gp.GRB.UNBOUNDED: "unbounded",
+        }
+        return statuses.get(self._model.Status, f"gurobi_status_{self._model.Status}")
+
+    def getVal(self, variable: object) -> float:
+        return float(variable.X)
+
+    def getObjVal(self) -> float:
+        return float(self._model.ObjVal)
+
+    def getSolvingTime(self) -> float:
+        return self._total_runtime_seconds
+
+    def getGap(self) -> float:
+        if self._model.Status == gp.GRB.OPTIMAL and not self._model.IsMIP:
+            return 0.0
+        if self._model.SolCount == 0:
+            return math.inf
+        return float(self._model.MIPGap)
+
+    def freeTransform(self) -> None:
+        # Gurobi 允许在 optimize 后直接增加约束并再次求解。
+        return None
+
+
+def _day_ahead_model(name: str, solver: str) -> object:
+    if solver == "scip":
+        if Model is None:
+            raise RuntimeError("pyscipopt is required for day_ahead_solver='scip'")
+        return Model(name)
+    if solver == "gurobi":
+        if gp is None:
+            raise RuntimeError("gurobipy is required for day_ahead_solver='gurobi'")
+        return _GurobiModelAdapter(name)
+    raise ValueError("day_ahead_solver must be 'scip' or 'gurobi'")
+
+
 @dataclass(frozen=True)
 class DayAheadResult:
     """风光储—碳预算日前计划；所有时段均为 1 小时。"""
@@ -98,6 +195,30 @@ class SaaDayAheadResult:
     @property
     def feasible(self) -> bool:
         return self.plan.feasible
+
+
+@dataclass(frozen=True)
+class GammaRoDayAheadResult:
+    """静态 Γ-RO 日前计划及其鲁棒可行性审计。"""
+
+    plan: DayAheadResult
+    gamma: float
+    effective_gamma: float
+    workload_support_size: int
+    energy_quantile: float
+    mean_batch_adjustment_mwh: float = 0.0
+    max_robust_constraint_violation_mw: float = 0.0
+    solver_status: str = "unknown"
+    runtime_seconds: float = 0.0
+    mip_gap: float = math.inf
+
+    @property
+    def feasible(self) -> bool:
+        return self.plan.feasible
+
+    @property
+    def gamma_saturated(self) -> bool:
+        return self.gamma > self.effective_gamma
 
 
 @dataclass(frozen=True)
@@ -240,6 +361,23 @@ def _carbon_kg(grid_mw: list[float], carbon_lbs_per_kwh: list[float]) -> float:
     )
 
 
+def _budgeted_protection(deviations: Sequence[float], gamma: float) -> float:
+    """返回 ``0<=z<=1, sum(z)<=gamma`` 的线性支持函数值。"""
+
+    if gamma < 0.0:
+        raise ValueError("gamma must be non-negative")
+    ordered = sorted((max(0.0, float(value)) for value in deviations), reverse=True)
+    if not ordered or gamma == 0.0:
+        return 0.0
+    effective = min(float(len(ordered)), gamma)
+    whole = int(math.floor(effective))
+    fraction = effective - whole
+    protection = sum(ordered[:whole])
+    if whole < len(ordered):
+        protection += fraction * ordered[whole]
+    return protection
+
+
 def solve_wind_solar_storage(
     inputs: list[HourlyInput],
     *,
@@ -259,6 +397,7 @@ def solve_wind_solar_storage(
     soc_max: float = 0.90,
     soc_initial: float = 0.50,
     bess_degradation_cost_usd_per_mwh_throughput: float = BESS_DEGRADATION_COST_USD_PER_MWH_THROUGHPUT,
+    day_ahead_solver: str = "gurobi",
 ) -> DayAheadResult:
     """求解预测风光、BESS 与有效算力容量下的日前成本 MILP。
 
@@ -266,8 +405,8 @@ def solve_wind_solar_storage(
     历史诊断复现，论文当前主流程不得启用。
     """
 
-    if Model is None:
-        raise RuntimeError("pyscipopt is required; run inside scip_env")
+    if day_ahead_solver not in {"scip", "gurobi"}:
+        raise ValueError("day_ahead_solver must be 'scip' or 'gurobi'")
     if not inputs:
         raise ValueError("inputs must not be empty")
     if min(g_max_mw, r_max_mw, bess_power_mw, bess_energy_mwh) < 0.0:
@@ -301,7 +440,7 @@ def solve_wind_solar_storage(
     baseline_carbon_kg = _carbon_kg(baseline_grid, forecast_carbon)
     carbon_budget_kg = (1.0 - carbon_budget_reduction) * baseline_carbon_kg
 
-    model = Model("wind_solar_storage_carbon_budget")
+    model = _day_ahead_model("wind_solar_storage_carbon_budget", day_ahead_solver)
     model.hideOutput()
     batch = {
         t: model.addVar(lb=0.0, ub=inputs[t].batch_window_mwh, name=f"batch_{t}")
@@ -442,6 +581,383 @@ def solve_wind_solar_storage(
     )
 
 
+def solve_static_gamma_ro_wind_solar_storage(
+    inputs: list[HourlyInput],
+    workload_scenarios: Sequence[ScenarioRealization],
+    *,
+    solar_downward_deviation_mwh: Sequence[float],
+    wind_downward_deviation_mwh: Sequence[float],
+    gamma: float,
+    g_max_mw: float,
+    r_max_mw: float,
+    p_grid_initial_mw: float,
+    bess_power_mw: float,
+    bess_energy_mwh: float,
+    pv_capacity_mw: float,
+    wind_capacity_mw: float,
+    energy_quantile: float = 0.90,
+    solar_reference_mwh: float = SOLAR_REFERENCE_MWH,
+    wind_reference_mwh: float = WIND_REFERENCE_MWH,
+    bess_efficiency: float = 0.90,
+    soc_min: float = 0.10,
+    soc_max: float = 0.90,
+    soc_initial: float = 0.50,
+    bess_degradation_cost_usd_per_mwh_throughput: float = BESS_DEGRADATION_COST_USD_PER_MWH_THROUGHPUT,
+    time_limit_seconds: float | None = None,
+    day_ahead_solver: str = "gurobi",
+) -> GammaRoDayAheadResult:
+    """求解工作负荷有限追索、能源静态预算鲁棒的 Γ-RO。
+
+    每条小时约束只有 PV 与 Wind 两个不确定系数，故可用预算集合的
+    支持函数直接精确改写，无需枚举 ``2T`` 维压力向量。工作负荷追索
+    按完整配对的到达/截止包络索引；BESS 与能源压力发生前固定。
+    """
+
+    if day_ahead_solver not in {"scip", "gurobi"}:
+        raise ValueError("day_ahead_solver must be 'scip' or 'gurobi'")
+    if not inputs:
+        raise ValueError("inputs must not be empty")
+    if not workload_scenarios:
+        raise ValueError("workload_scenarios must not be empty")
+    if gamma < 0.0:
+        raise ValueError("gamma must be non-negative")
+    if not 0.0 < energy_quantile < 1.0:
+        raise ValueError("energy_quantile must be in (0, 1)")
+    if min(g_max_mw, r_max_mw, bess_power_mw, bess_energy_mwh) < 0.0:
+        raise ValueError("grid and BESS capacities must be non-negative")
+    if not 0.0 < bess_efficiency <= 1.0:
+        raise ValueError("bess_efficiency must be in (0, 1]")
+    if not 0.0 <= soc_min <= soc_initial <= soc_max <= 1.0:
+        raise ValueError("SOC values must satisfy 0 <= min <= initial <= max <= 1")
+    if bess_degradation_cost_usd_per_mwh_throughput < 0.0:
+        raise ValueError("bess degradation cost must be non-negative")
+    if time_limit_seconds is not None and time_limit_seconds <= 0.0:
+        raise ValueError("time_limit_seconds must be positive when provided")
+
+    hours = len(inputs)
+    if len(solar_downward_deviation_mwh) != hours or len(
+        wind_downward_deviation_mwh
+    ) != hours:
+        raise ValueError("energy downward deviations must match the input horizon")
+    for scenario in workload_scenarios:
+        if len(scenario.cumulative_arrived_core_hours) != hours or len(
+            scenario.cumulative_due_core_hours
+        ) != hours:
+            raise ValueError("every workload scenario must match the input horizon")
+    conversions = {item.workload_mwh_per_core_hour for item in inputs}
+    if len(conversions) != 1 or next(iter(conversions)) <= 0.0:
+        raise ValueError(
+            "inputs must carry one positive workload_mwh_per_core_hour conversion"
+        )
+    workload_conversion = next(iter(conversions))
+
+    p_must = inputs[0].online_mw + inputs[0].base_mw
+    pv, wind = _resource_profiles(
+        inputs,
+        pv_capacity_mw=pv_capacity_mw,
+        wind_capacity_mw=wind_capacity_mw,
+        solar_reference_mwh=solar_reference_mwh,
+        wind_reference_mwh=wind_reference_mwh,
+        actual=False,
+    )
+    stressed_pv = _local_resource_profile(
+        [
+            inputs[t].forecast_erco_solar_generation_mwh
+            - float(solar_downward_deviation_mwh[t])
+            for t in range(hours)
+        ],
+        capacity_mw=pv_capacity_mw,
+        reference_mwh=solar_reference_mwh,
+        label="gamma_ro_stressed_pv",
+    )
+    stressed_wind = _local_resource_profile(
+        [
+            inputs[t].forecast_erco_wind_generation_mwh
+            - float(wind_downward_deviation_mwh[t])
+            for t in range(hours)
+        ],
+        capacity_mw=wind_capacity_mw,
+        reference_mwh=wind_reference_mwh,
+        label="gamma_ro_stressed_wind",
+    )
+    pv_deviation = [max(0.0, pv[t] - stressed_pv[t]) for t in range(hours)]
+    wind_deviation = [max(0.0, wind[t] - stressed_wind[t]) for t in range(hours)]
+    effective_gamma = min(2.0, gamma)
+    protection = [
+        _budgeted_protection((pv_deviation[t], wind_deviation[t]), effective_gamma)
+        for t in range(hours)
+    ]
+
+    prices = [item.dam_lz_houston_usd_per_mwh for item in inputs]
+    forecast_carbon = [item.forecast_consumed_co2_lbs_per_kwh for item in inputs]
+    baseline_grid = [
+        max(0.0, p_must + item.batch_baseline_mwh - pv[t] - wind[t])
+        for t, item in enumerate(inputs)
+    ]
+    baseline_cost = sum(price * grid for price, grid in zip(prices, baseline_grid))
+    baseline_carbon_kg = _carbon_kg(baseline_grid, forecast_carbon)
+    batch_total_mwh = sum(item.batch_baseline_mwh for item in inputs)
+    for scenario in workload_scenarios:
+        scenario_total = scenario.cumulative_arrived_core_hours[-1] * workload_conversion
+        if not math.isclose(
+            scenario_total, batch_total_mwh, rel_tol=1e-8, abs_tol=1e-6
+        ):
+            raise ValueError("RO workload total and nominal batch total must match")
+
+    model = _day_ahead_model("static_gamma_ro", day_ahead_solver)
+    model.hideOutput()
+    if time_limit_seconds is not None:
+        model.setRealParam("limits/time", time_limit_seconds)
+    batch = {
+        t: model.addVar(lb=0.0, ub=inputs[t].batch_window_mwh, name=f"batch_{t}")
+        for t in range(hours)
+    }
+    grid = {
+        t: model.addVar(lb=0.0, ub=g_max_mw, name=f"grid_{t}")
+        for t in range(hours)
+    }
+    curtailment = {
+        t: model.addVar(lb=0.0, ub=pv[t] + wind[t], name=f"curtailment_{t}")
+        for t in range(hours)
+    }
+    p_ch = {
+        t: model.addVar(lb=0.0, ub=bess_power_mw, name=f"pch_{t}")
+        for t in range(hours)
+    }
+    p_dis = {
+        t: model.addVar(lb=0.0, ub=bess_power_mw, name=f"pdis_{t}")
+        for t in range(hours)
+    }
+    eta = math.sqrt(bess_efficiency)
+    energy = {
+        t: model.addVar(
+            lb=soc_min * bess_energy_mwh,
+            ub=soc_max * bess_energy_mwh,
+            name=f"bess_energy_{t}",
+        )
+        for t in range(hours + 1)
+    }
+    model.addCons(energy[0] == soc_initial * bess_energy_mwh)
+    for t in range(hours):
+        if inputs[t].batch_capacity_mw is not None:
+            model.addCons(batch[t] <= inputs[t].batch_capacity_mw)
+        model.addCons(p_ch[t] + p_dis[t] <= bess_power_mw)
+        model.addCons(energy[t + 1] == energy[t] + eta * p_ch[t] - p_dis[t] / eta)
+        model.addCons(
+            grid[t]
+            == p_must + batch[t] + p_ch[t] - p_dis[t] - pv[t] - wind[t] + curtailment[t]
+        )
+    model.addCons(energy[hours] == energy[0])
+    model.addCons(sum(batch.values()) == batch_total_mwh)
+    if all(
+        item.batch_cumulative_arrived_mwh is not None
+        and item.batch_cumulative_due_mwh is not None
+        for item in inputs
+    ):
+        cumulative_nominal = 0.0
+        for t in range(hours):
+            cumulative_nominal += batch[t]
+            model.addCons(cumulative_nominal <= float(inputs[t].batch_cumulative_arrived_mwh))
+            model.addCons(cumulative_nominal >= float(inputs[t].batch_cumulative_due_mwh))
+    previous_nominal: object = p_grid_initial_mw
+    for t in range(hours):
+        model.addCons(grid[t] - previous_nominal <= r_max_mw)
+        model.addCons(previous_nominal - grid[t] <= r_max_mw)
+        previous_nominal = grid[t]
+
+    fallback_batch_capacity_mw = max(item.batch_window_mwh for item in inputs)
+    scenario_batch_capacity = [
+        item.batch_capacity_mw
+        if item.batch_capacity_mw is not None
+        else fallback_batch_capacity_mw
+        for item in inputs
+    ]
+    scenario_grid_upper = p_must + max(scenario_batch_capacity) + bess_power_mw
+    scenario_batch: dict[tuple[int, int], object] = {}
+    scenario_grid: dict[tuple[int, int], object] = {}
+    scenario_curtailment: dict[tuple[int, int], object] = {}
+    for scenario_index, scenario in enumerate(workload_scenarios):
+        cumulative_scenario = 0.0
+        previous_scenario_grid: object = p_grid_initial_mw
+        for t in range(hours):
+            scenario_batch[scenario_index, t] = model.addVar(
+                lb=0.0,
+                ub=scenario_batch_capacity[t],
+                name=f"ro_batch_{scenario_index}_{t}",
+            )
+            cumulative_scenario += scenario_batch[scenario_index, t]
+            model.addCons(
+                cumulative_scenario
+                <= scenario.cumulative_arrived_core_hours[t] * workload_conversion,
+                name=f"ro_arrival_{scenario_index}_{t}",
+            )
+            model.addCons(
+                cumulative_scenario
+                >= scenario.cumulative_due_core_hours[t] * workload_conversion,
+                name=f"ro_due_{scenario_index}_{t}",
+            )
+            scenario_grid[scenario_index, t] = model.addVar(
+                lb=0.0,
+                ub=scenario_grid_upper,
+                name=f"ro_grid_{scenario_index}_{t}",
+            )
+            scenario_curtailment[scenario_index, t] = model.addVar(
+                lb=0.0,
+                ub=pv[t] + wind[t],
+                name=f"ro_curtailment_{scenario_index}_{t}",
+            )
+            model.addCons(
+                scenario_grid[scenario_index, t]
+                == p_must
+                + scenario_batch[scenario_index, t]
+                + p_ch[t]
+                - p_dis[t]
+                - pv[t]
+                - wind[t]
+                + scenario_curtailment[scenario_index, t],
+                name=f"ro_balance_{scenario_index}_{t}",
+            )
+            model.addCons(
+                scenario_grid[scenario_index, t] + protection[t] <= g_max_mw,
+                name=f"ro_grid_limit_{scenario_index}_{t}",
+            )
+            model.addCons(
+                scenario_curtailment[scenario_index, t] + protection[t]
+                <= pv[t] + wind[t],
+                name=f"ro_curtailment_availability_{scenario_index}_{t}",
+            )
+            model.addCons(
+                scenario_grid[scenario_index, t]
+                - previous_scenario_grid
+                + protection[t]
+                <= r_max_mw,
+                name=f"ro_ramp_up_{scenario_index}_{t}",
+            )
+            previous_protection = protection[t - 1] if t > 0 else 0.0
+            model.addCons(
+                previous_scenario_grid
+                - scenario_grid[scenario_index, t]
+                + previous_protection
+                <= r_max_mw,
+                name=f"ro_ramp_down_{scenario_index}_{t}",
+            )
+            previous_scenario_grid = scenario_grid[scenario_index, t]
+        model.addCons(
+            sum(scenario_batch[scenario_index, t] for t in range(hours))
+            == batch_total_mwh,
+            name=f"ro_batch_energy_{scenario_index}",
+        )
+
+    grid_cost_expr = sum(prices[t] * grid[t] for t in range(hours))
+    degradation_cost_expr = bess_degradation_cost_usd_per_mwh_throughput * sum(
+        p_ch[t] + p_dis[t] for t in range(hours)
+    )
+    model.setObjective(grid_cost_expr + degradation_cost_expr, "minimize")
+    model.optimize()
+    status = str(model.getStatus())
+    if status != "optimal":
+        return GammaRoDayAheadResult(
+            plan=_infeasible_day_ahead_result(),
+            gamma=gamma,
+            effective_gamma=effective_gamma,
+            workload_support_size=len(workload_scenarios),
+            energy_quantile=energy_quantile,
+            solver_status=status,
+            runtime_seconds=model.getSolvingTime(),
+            mip_gap=model.getGap(),
+        )
+
+    batch_values = [model.getVal(batch[t]) for t in range(hours)]
+    grid_values = [model.getVal(grid[t]) for t in range(hours)]
+    charge_values = [model.getVal(p_ch[t]) for t in range(hours)]
+    discharge_values = [model.getVal(p_dis[t]) for t in range(hours)]
+    simultaneous_hours = [
+        t for t in range(hours) if min(charge_values[t], discharge_values[t]) > 1e-6
+    ]
+    if simultaneous_hours:
+        raise RuntimeError(
+            "Gamma-RO convex-hull solution violates charge/discharge complementarity "
+            f"in {len(simultaneous_hours)} hours"
+        )
+    curtailment_values = [model.getVal(curtailment[t]) for t in range(hours)]
+    scenario_adjustments: list[float] = []
+    robust_margins: list[float] = []
+    for scenario_index in range(len(workload_scenarios)):
+        scenario_batch_values = [
+            model.getVal(scenario_batch[scenario_index, t]) for t in range(hours)
+        ]
+        scenario_grid_values = [
+            model.getVal(scenario_grid[scenario_index, t]) for t in range(hours)
+        ]
+        scenario_curtailment_values = [
+            model.getVal(scenario_curtailment[scenario_index, t])
+            for t in range(hours)
+        ]
+        scenario_adjustments.append(
+            sum(
+                abs(scenario_batch_values[t] - batch_values[t])
+                for t in range(hours)
+            )
+        )
+        for t in range(hours):
+            robust_margins.extend(
+                (
+                    scenario_grid_values[t] + protection[t] - g_max_mw,
+                    scenario_curtailment_values[t] + protection[t] - pv[t] - wind[t],
+                    scenario_grid_values[t]
+                    - (p_grid_initial_mw if t == 0 else scenario_grid_values[t - 1])
+                    + protection[t]
+                    - r_max_mw,
+                    (p_grid_initial_mw if t == 0 else scenario_grid_values[t - 1])
+                    - scenario_grid_values[t]
+                    + (protection[t - 1] if t > 0 else 0.0)
+                    - r_max_mw,
+                )
+            )
+    grid_cost = sum(price * value for price, value in zip(prices, grid_values))
+    degradation_cost = bess_degradation_cost(
+        charge_values,
+        discharge_values,
+        bess_degradation_cost_usd_per_mwh_throughput,
+    )
+    forecast_carbon_kg = _carbon_kg(grid_values, forecast_carbon)
+    plan = DayAheadResult(
+        baseline_cost=baseline_cost,
+        baseline_carbon_kg=baseline_carbon_kg,
+        grid_cost=grid_cost,
+        bess_degradation_cost=degradation_cost,
+        operating_cost=grid_cost + degradation_cost,
+        cost_reduction=(
+            (baseline_cost - grid_cost - degradation_cost) / baseline_cost
+            if baseline_cost
+            else 0.0
+        ),
+        forecast_carbon_kg=forecast_carbon_kg,
+        carbon_budget_kg=baseline_carbon_kg,
+        carbon_budget_slack_kg=baseline_carbon_kg - forecast_carbon_kg,
+        batch=batch_values,
+        grid=grid_values,
+        bess_charge=charge_values,
+        bess_discharge=discharge_values,
+        pv_generation=pv,
+        wind_generation=wind,
+        curtailment=curtailment_values,
+        feasible=True,
+    )
+    return GammaRoDayAheadResult(
+        plan=plan,
+        gamma=gamma,
+        effective_gamma=effective_gamma,
+        workload_support_size=len(workload_scenarios),
+        energy_quantile=energy_quantile,
+        mean_batch_adjustment_mwh=sum(scenario_adjustments) / len(scenario_adjustments),
+        max_robust_constraint_violation_mw=max(0.0, max(robust_margins, default=0.0)),
+        solver_status=status,
+        runtime_seconds=model.getSolvingTime(),
+        mip_gap=model.getGap(),
+    )
+
+
 def solve_saa_wind_solar_storage(
     inputs: list[HourlyInput],
     scenarios: Sequence[ScenarioRealization],
@@ -472,6 +988,8 @@ def solve_saa_wind_solar_storage(
     scenario_indices: Sequence[int] | None = None,
     carbon_cuts: Sequence[CarbonBendersCut] = (),
     minimize_carbon_violations: bool = False,
+    day_ahead_solver: str = "gurobi",
+    recourse_solver: str = "gurobi",
 ) -> SaaDayAheadResult:
     """求解带有限批处理追索的三通道等概率 SAA 机会约束。
 
@@ -480,8 +998,10 @@ def solve_saa_wind_solar_storage(
     调整量和场景购电量，不引入人为加权系数。
     """
 
-    if Model is None:
-        raise RuntimeError("pyscipopt is required; run inside scip_env")
+    if day_ahead_solver not in {"scip", "gurobi"}:
+        raise ValueError("day_ahead_solver must be 'scip' or 'gurobi'")
+    if recourse_solver not in {"scip", "gurobi"}:
+        raise ValueError("recourse_solver must be 'scip' or 'gurobi'")
     if not inputs:
         raise ValueError("inputs must not be empty")
     if not scenarios:
@@ -565,7 +1085,7 @@ def solve_saa_wind_solar_storage(
     ):
         raise ValueError("SAA workload total and nominal batch total must match")
 
-    model = Model("saa_wind_solar_storage")
+    model = _day_ahead_model("saa_wind_solar_storage", day_ahead_solver)
     model.hideOutput()
     if time_limit_seconds is not None:
         model.setRealParam("limits/time", time_limit_seconds)
@@ -978,6 +1498,7 @@ def solve_saa_wind_solar_storage(
             p_grid_initial_mw=p_grid_initial_mw,
             solar_reference_mwh=solar_reference_mwh,
             wind_reference_mwh=wind_reference_mwh,
+            recourse_solver=recourse_solver,
         )
         for scenario in scenarios
     ]
@@ -1650,7 +2171,7 @@ def replay_joint_scenario_with_batch_recourse(
     solar_reference_mwh: float = SOLAR_REFERENCE_MWH,
     wind_reference_mwh: float = WIND_REFERENCE_MWH,
     tolerance: float = 1e-7,
-    recourse_solver: str = "scip",
+    recourse_solver: str = "gurobi",
 ) -> ScenarioReplayResult:
     """按指定后端求三阶段有限批处理追索；数学模型保持一致。"""
 
@@ -1874,7 +2395,8 @@ def solve_decomposed_saa_wind_solar_storage(
     max_iterations: int = 8,
     display_progress: bool = False,
     replay_workers: int = 1,
-    recourse_solver: str = "scip",
+    day_ahead_solver: str = "gurobi",
+    recourse_solver: str = "gurobi",
 ) -> SaaDayAheadResult:
     """用活动场景约束生成求解 SAA，并用全部场景 LP 回放验收。
 
@@ -1889,8 +2411,12 @@ def solve_decomposed_saa_wind_solar_storage(
         raise ValueError("max_iterations must be positive")
     if replay_workers <= 0:
         raise ValueError("replay_workers must be positive")
+    if day_ahead_solver not in {"scip", "gurobi"}:
+        raise ValueError("day_ahead_solver must be 'scip' or 'gurobi'")
     if recourse_solver not in {"scip", "gurobi"}:
         raise ValueError("recourse_solver must be 'scip' or 'gurobi'")
+    if day_ahead_solver == "gurobi" and gp is None:
+        raise RuntimeError("gurobipy is required for day_ahead_solver='gurobi'")
     if recourse_solver == "gurobi" and gp is None:
         raise RuntimeError("gurobipy is required for recourse_solver='gurobi'")
     total_scenarios = len(scenarios)
@@ -1950,6 +2476,8 @@ def solve_decomposed_saa_wind_solar_storage(
             initial_plan=previous_plan,
             scenario_indices=ordered_active,
             carbon_cuts=carbon_cuts,
+            day_ahead_solver=day_ahead_solver,
+            recourse_solver=recourse_solver,
         )
         last_result = master_result
         if display_progress:
@@ -2148,6 +2676,8 @@ def solve_decomposed_saa_wind_solar_storage(
                 time_limit_seconds=time_limit_seconds,
                 initial_plan=previous_plan,
                 scenario_indices=restoration_indices,
+                day_ahead_solver=day_ahead_solver,
+                recourse_solver=recourse_solver,
             )
             if restoration.feasible:
                 previous_plan = restoration.plan
@@ -2192,6 +2722,8 @@ def solve_decomposed_saa_wind_solar_storage(
                 initial_plan=previous_plan,
                 scenario_indices=[restoration_index],
                 carbon_cuts=carbon_cuts,
+                day_ahead_solver=day_ahead_solver,
+                recourse_solver=recourse_solver,
             )
             if cut_restoration.feasible:
                 previous_plan = cut_restoration.plan
@@ -2235,6 +2767,8 @@ def solve_decomposed_saa_wind_solar_storage(
                     scenario_indices=[restoration_index],
                     carbon_cuts=carbon_cuts,
                     minimize_carbon_violations=True,
+                    day_ahead_solver=day_ahead_solver,
+                    recourse_solver=recourse_solver,
                 )
                 carbon_cut_violation_lower_bound = (
                     cut_diagnostic.carbon_cut_violation_lower_bound

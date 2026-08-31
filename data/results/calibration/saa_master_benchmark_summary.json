@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "benchmark": "fold_1_window_0_N20_day_ahead_solver",
+  "fixed_settings": {
+    "active_scenario_count": 3,
+    "decomposition_max_iterations": 3,
+    "recourse_solver": "gurobi",
+    "replay_workers": 8,
+    "solver_threads_per_model": 1,
+    "time_limit_seconds_per_master": 300
+  },
+  "results": {
+    "scip": {
+      "master_runtime_seconds": 11.0,
+      "total_runtime_seconds": 69.43459929997334,
+      "solver_status": "optimal_decomposed"
+    },
+    "gurobi": {
+      "master_runtime_seconds": 5.481,
+      "total_runtime_seconds": 67.50563560001319,
+      "solver_status": "optimal_decomposed"
+    },
+    "master_speedup_scip_over_gurobi": 2.0069330414158,
+    "master_runtime_reduction_fraction": 0.5017272727272728,
+    "total_speedup_scip_over_gurobi": 1.0285748542742374,
+    "total_runtime_reduction_fraction": 0.027781015796268793
+  },
+  "equivalence": {
+    "nominal_operating_cost_abs_difference_usd": 1.8189894035458565e-12,
+    "nominal_grid_max_abs_difference_mw": 1.5876189252139739e-13,
+    "total_batch_abs_difference_mwh": 8.526512829121202e-14,
+    "total_charge_abs_difference_mwh": 1.5987211554602254e-14,
+    "total_discharge_abs_difference_mwh": 1.4210854715202004e-14,
+    "workload_violation_equal": true,
+    "grid_limit_violation_equal": true,
+    "ramp_violation_equal": true,
+    "active_scenario_count_equal": true,
+    "decomposition_iterations_equal": true,
+    "maximum_independent_constraint_residual": 1.4210854715202004e-13,
+    "actual_operating_cost_relative_difference": -0.003097948367323597,
+    "actual_carbon_relative_difference": -0.0008793402369656565,
+    "note": "The forecast grid and aggregate decisions agree within numerical tolerance. Hourly nominal batch and BESS charge allocations can differ across alternate optimal decompositions of the same net load; validation cost and carbon are therefore reported attributes rather than exact equality gates."
+  },
+  "decision": "Use Gurobi as the default day-ahead and recourse solver for the active mainline; retain explicit SCIP backends as equivalence and historical-diagnostic references."
+}

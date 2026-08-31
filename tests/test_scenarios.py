@@ -10,6 +10,7 @@ from alibaba2018_dro.residuals import CSV_COLUMNS
 from alibaba2018_dro.scenarios import (
     CALIBRATION_BLOCKS_FILENAME,
     load_calibration_energy_rows,
+    load_hourly_downward_residual_quantiles,
     load_saa_scenarios,
     write_calibration_day_blocks,
     write_saa_scenario_manifest,
@@ -34,6 +35,30 @@ def _residual_row(date_text: str, fold: str, hour: int) -> dict[str, object]:
 
 
 class ScenarioManifestTests(unittest.TestCase):
+    def test_downward_quantiles_exclude_held_out_fold(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            calibration_csv = Path(temporary_directory) / "calibration.csv"
+            rows: list[dict[str, object]] = []
+            for hour in range(24):
+                training = _residual_row("2024-01-01", "fold_1", hour)
+                training["residual_erco_solar_generation_mwh"] = -10.0
+                training["residual_erco_wind_generation_mwh"] = -20.0
+                held_out = _residual_row("2024-02-01", "fold_2", hour)
+                held_out["residual_erco_solar_generation_mwh"] = -1000.0
+                held_out["residual_erco_wind_generation_mwh"] = -2000.0
+                rows.extend((training, held_out))
+            with calibration_csv.open("w", newline="", encoding="utf-8") as output_file:
+                writer = csv.DictWriter(output_file, fieldnames=CSV_COLUMNS)
+                writer.writeheader()
+                writer.writerows(rows)
+
+            solar, wind = load_hourly_downward_residual_quantiles(
+                calibration_csv, held_out_fold="fold_2"
+            )
+
+            self.assertEqual(solar, (10.0,) * 24)
+            self.assertEqual(wind, (20.0,) * 24)
+
     def test_calibration_blocks_and_manifest_are_reconstructible(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)

@@ -607,3 +607,53 @@ def load_calibration_energy_rows(
             raise ValueError(f"calibration day {date_text} has invalid hour indices")
         rows.extend(daily_rows)
     return rows
+
+
+def load_hourly_downward_residual_quantiles(
+    calibration_csv: Path,
+    *,
+    quantile: float = 0.90,
+    held_out_fold: str | None = None,
+) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    """计算训练折中 24 个小时位置的 PV/Wind 下偏分位数。
+
+    下偏定义为 ``max(0, forecast-actual)``，即残差为负时的绝对值。
+    指定 ``held_out_fold`` 时完全排除该折；不指定时使用全部可用日块。
+    """
+
+    if not 0.0 < quantile < 1.0:
+        raise ValueError("quantile must be in (0, 1)")
+    by_hour_solar: list[list[float]] = [[] for _ in range(HOURS_PER_DAY)]
+    by_hour_wind: list[list[float]] = [[] for _ in range(HOURS_PER_DAY)]
+    with calibration_csv.open(newline="", encoding="utf-8") as input_file:
+        for row in csv.DictReader(input_file):
+            if not _is_true(row.get("usable_24h_block", "False")):
+                continue
+            if held_out_fold is not None and row.get("cv_fold") == held_out_fold:
+                continue
+            hour = int(row["hour_index"])
+            if not 0 <= hour < HOURS_PER_DAY:
+                raise ValueError("calibration row contains an invalid hour_index")
+            by_hour_solar[hour].append(
+                max(0.0, -_finite_float(row[RESIDUAL_SOLAR_COLUMN], label="residual solar"))
+            )
+            by_hour_wind[hour].append(
+                max(0.0, -_finite_float(row[RESIDUAL_WIND_COLUMN], label="residual wind"))
+            )
+
+    def linear_quantile(values: list[float]) -> float:
+        if not values:
+            raise ValueError("no calibration residuals remain after fold filtering")
+        ordered = sorted(values)
+        position = quantile * (len(ordered) - 1)
+        lower = int(math.floor(position))
+        upper = int(math.ceil(position))
+        if lower == upper:
+            return ordered[lower]
+        fraction = position - lower
+        return ordered[lower] + fraction * (ordered[upper] - ordered[lower])
+
+    return (
+        tuple(linear_quantile(values) for values in by_hour_solar),
+        tuple(linear_quantile(values) for values in by_hour_wind),
+    )

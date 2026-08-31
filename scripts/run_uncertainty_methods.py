@@ -282,16 +282,17 @@ def _run_config(
     folds: tuple[str, ...],
     max_windows: int,
     selection_mode: str,
+    day_ahead_solver: str,
     recourse_solver: str,
     time_limit_seconds: float | None,
     decomposition_max_iterations: int,
     replay_workers: int,
 ) -> dict[str, object]:
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "method": "SAA",
-        "protocol": "2024_three_fold_sequential_sample_selection_v2",
-        "decomposition": "active_scenarios_with_scipy_highs_three_risk_replay",
+        "protocol": "2024_three_fold_sequential_sample_selection_v3",
+        "decomposition": "active_scenarios_three_risk_replay",
         "parameters": {
             "beta": 0.10,
             "wilson_confidence_one_sided": 0.95,
@@ -306,6 +307,7 @@ def _run_config(
             "held_out_folds": list(folds),
             "validation_windows_per_fold": max_windows,
             "selection_mode": selection_mode,
+            "day_ahead_solver": day_ahead_solver,
             "recourse_solver": recourse_solver,
         },
         "source_sha256": {
@@ -388,9 +390,14 @@ def main() -> None:
         default=1,
     )
     parser.add_argument(
+        "--day-ahead-solver",
+        choices=("scip", "gurobi"),
+        default="gurobi",
+    )
+    parser.add_argument(
         "--recourse-solver",
         choices=("scip", "gurobi"),
-        default="scip",
+        default="gurobi",
     )
     args = parser.parse_args()
 
@@ -419,6 +426,7 @@ def main() -> None:
         folds=tuple(args.folds),
         max_windows=args.max_windows,
         selection_mode=args.selection_mode,
+        day_ahead_solver=args.day_ahead_solver,
         recourse_solver=args.recourse_solver,
         time_limit_seconds=args.time_limit_seconds,
         decomposition_max_iterations=args.decomposition_max_iterations,
@@ -508,6 +516,7 @@ def main() -> None:
                     max_iterations=args.decomposition_max_iterations,
                     display_progress=True,
                     replay_workers=args.replay_workers,
+                    day_ahead_solver=args.day_ahead_solver,
                     recourse_solver=args.recourse_solver,
                 )
                 if result.feasible:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import csv
 import sys
 from pathlib import Path
@@ -26,6 +27,13 @@ WINDOWS = ["2025-01-01", "2025-04-01", "2025-07-01", "2025-10-01"]
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--day-ahead-solver",
+        choices=("scip", "gurobi"),
+        default="gurobi",
+    )
+    args = parser.parse_args()
     envelope = DATA_PROCESSED / "workload" / "nominal_workload_30d.csv"
     stats = DATA_PROCESSED / "workload" / "workload_stats.json"
     rows: list[dict[str, float | int | str | None]] = []
@@ -55,6 +63,7 @@ def main() -> None:
             "workload_scale": round(inputs[0].workload_scale, 8),
             "pv_capacity_mw": round(pv_capacity_mw, 4),
             "wind_capacity_mw": round(wind_capacity_mw, 4),
+            "day_ahead_solver": args.day_ahead_solver,
         }
         plan = solve_wind_solar_storage(
             inputs,
@@ -65,6 +74,7 @@ def main() -> None:
             bess_energy_mwh=bess_energy_mwh,
             pv_capacity_mw=pv_capacity_mw,
             wind_capacity_mw=wind_capacity_mw,
+            day_ahead_solver=args.day_ahead_solver,
         )
         if not plan.feasible:
             rows.append(
