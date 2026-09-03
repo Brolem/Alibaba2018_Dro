@@ -9,9 +9,11 @@ from pathlib import Path
 from alibaba2018_dro.residuals import CSV_COLUMNS
 from alibaba2018_dro.scenarios import (
     CALIBRATION_BLOCKS_FILENAME,
+    attach_bootstrap_energy_replay,
     load_calibration_energy_rows,
     load_hourly_downward_residual_quantiles,
     load_saa_scenarios,
+    load_workload_replay_scenarios,
     write_calibration_day_blocks,
     write_saa_scenario_manifest,
 )
@@ -187,6 +189,30 @@ class ScenarioManifestTests(unittest.TestCase):
                 scenarios[0].cumulative_arrived_core_hours[-1], 3600.0
             )
             self.assertEqual(len(scenarios[0].residual_solar_mwh), 720)
+            workload_replays = load_workload_replay_scenarios(
+                manifest_path=manifest_path,
+                workload_csv=workload_csv,
+            )
+            energy_replays = attach_bootstrap_energy_replay(
+                workload_replays,
+                calibration_csv=output_directory / CALIBRATION_BLOCKS_FILENAME,
+            )
+            repeated_energy_replays = attach_bootstrap_energy_replay(
+                workload_replays,
+                calibration_csv=output_directory / CALIBRATION_BLOCKS_FILENAME,
+            )
+            self.assertEqual(len(energy_replays), 100)
+            self.assertEqual(len(energy_replays[0].energy_delivery_dates), 30)
+            self.assertEqual(len(energy_replays[0].residual_solar_mwh), 720)
+            self.assertEqual(energy_replays, repeated_energy_replays)
+            self.assertEqual(
+                energy_replays[0].cumulative_arrived_core_hours,
+                workload_replays[0].cumulative_arrived_core_hours,
+            )
+            self.assertNotEqual(
+                energy_replays[0].energy_delivery_dates,
+                energy_replays[1].energy_delivery_dates,
+            )
             energy_rows = load_calibration_energy_rows(
                 output_directory / CALIBRATION_BLOCKS_FILENAME,
                 ("2024-01-01", "2024-02-01"),

@@ -632,6 +632,84 @@ def load_workload_replay_scenarios(
     return realizations
 
 
+def attach_bootstrap_energy_replay(
+    workload_scenarios: Sequence[ScenarioRealization],
+    *,
+    calibration_csv: Path,
+    energy_seed: int = ENERGY_REPLAY_SEED,
+    residual_scale: float = 1.0,
+) -> list[ScenarioRealization]:
+    """为算力回放轨迹配对可复现的2024联合能源残差块自助样本。
+
+    该函数用于压力/边界发现，不产生独立样本外能源观测。每个场景使用
+    ``energy_seed + scenario_id`` 独立初始化随机数生成器，并按完整24小时块
+    有放回抽样，因而不同方法可按 ``scenario_id`` 严格配对复现。
+    """
+
+    if not workload_scenarios:
+        raise ValueError("workload_scenarios must not be empty")
+    if not math.isfinite(residual_scale) or residual_scale <= 0.0:
+        raise ValueError("residual_scale must be positive and finite")
+    calibration_by_date = _read_csv_by_date(calibration_csv)
+    energy_dates = sorted(calibration_by_date)
+    for date_text in energy_dates:
+        rows = calibration_by_date[date_text]
+        if not _valid_residual_block(rows, date_text=date_text):
+            raise ValueError(f"calibration day {date_text} is not a usable 24h block")
+
+    scenario_ids = [scenario.scenario_id for scenario in workload_scenarios]
+    if len(set(scenario_ids)) != len(scenario_ids):
+        raise ValueError("workload scenario ids must be unique")
+
+    realizations: list[ScenarioRealization] = []
+    for scenario in workload_scenarios:
+        hours = len(scenario.cumulative_arrived_core_hours)
+        if hours <= 0 or hours % HOURS_PER_DAY:
+            raise ValueError("workload scenario horizon must contain complete days")
+        if len(scenario.cumulative_due_core_hours) != hours:
+            raise ValueError("workload scenario envelopes must have equal lengths")
+        sampled_dates = tuple(
+            _sample_energy_dates(
+                energy_dates,
+                rng=np.random.default_rng(energy_seed + scenario.scenario_id),
+                days=hours // HOURS_PER_DAY,
+            )
+        )
+        energy_rows = [
+            row
+            for date_text in sampled_dates
+            for row in sorted(
+                calibration_by_date[date_text],
+                key=lambda item: int(item["hour_index"]),
+            )
+        ]
+        realizations.append(
+            ScenarioRealization(
+                scenario_id=scenario.scenario_id,
+                workload_source_days_one_based=scenario.workload_source_days_one_based,
+                energy_delivery_dates=sampled_dates,
+                cumulative_arrived_core_hours=scenario.cumulative_arrived_core_hours,
+                cumulative_due_core_hours=scenario.cumulative_due_core_hours,
+                residual_solar_mwh=tuple(
+                    residual_scale
+                    * _finite_float(row[RESIDUAL_SOLAR_COLUMN], label="residual solar")
+                    for row in energy_rows
+                ),
+                residual_wind_mwh=tuple(
+                    residual_scale
+                    * _finite_float(row[RESIDUAL_WIND_COLUMN], label="residual wind")
+                    for row in energy_rows
+                ),
+                residual_carbon_lbs_per_kwh=tuple(
+                    residual_scale
+                    * _finite_float(row[RESIDUAL_CARBON_COLUMN], label="residual carbon")
+                    for row in energy_rows
+                ),
+            )
+        )
+    return realizations
+
+
 def load_calibration_energy_rows(
     calibration_csv: Path,
     energy_delivery_dates: Sequence[str],

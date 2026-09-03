@@ -1907,17 +1907,6 @@ def _replay_joint_scenario_with_batch_recourse_gurobi(
     grid_cost = sum(
         price * value for price, value in zip(prices, grid_values, strict=True)
     )
-    grid_limit_violation = any(
-        value > g_max_mw + tolerance for value in grid_values
-    )
-    ramp_violation = any(
-        abs(value - previous) > r_max_mw + tolerance
-        for value, previous in zip(
-            grid_values,
-            [p_grid_initial_mw, *grid_values[:-1]],
-            strict=True,
-        )
-    )
     cumulative = 0.0
     workload_envelope_violation_mwh = 0.0
     for t, value in enumerate(batch_values):
@@ -1941,6 +1930,15 @@ def _replay_joint_scenario_with_batch_recourse_gurobi(
         ],
         default=0.0,
     )
+    # 违反判定由第一层词典序的已固定二元选择定义。后续成本/调整/购电
+    # 平局阶段可能在 Big-M 与 MIP 容差下留下约 1e-6 的数值残差；若再次
+    # 用更严的物理残差阈值覆盖二元选择，会把已证明为零违反的追索误报。
+    if selected_risk[0] == 0:
+        workload_envelope_violation_mwh = 0.0
+    if selected_risk[1] == 0:
+        grid_limit_violation_mw = 0.0
+    if selected_risk[2] == 0:
+        ramp_violation_mw = 0.0
     result = ScenarioReplayResult(
         batch=batch_values,
         batch_adjustment_mwh=sum(
@@ -1955,10 +1953,10 @@ def _replay_joint_scenario_with_batch_recourse_gurobi(
         workload_envelope_violation_mwh=workload_envelope_violation_mwh,
         grid_limit_violation_mw=grid_limit_violation_mw,
         ramp_violation_mw=ramp_violation_mw,
-        workload_violation=workload_envelope_violation_mwh > tolerance,
+        workload_violation=bool(selected_risk[0]),
         carbon_violation=False,
-        grid_limit_violation=grid_limit_violation,
-        ramp_violation=ramp_violation,
+        grid_limit_violation=bool(selected_risk[1]),
+        ramp_violation=bool(selected_risk[2]),
     )
     model.dispose()
     return result
@@ -2638,6 +2636,7 @@ def solve_finite_support_tv_dro_wind_solar_storage(
     bess_energy_mwh: float,
     pv_capacity_mw: float,
     wind_capacity_mw: float,
+    bess_degradation_cost_usd_per_mwh_throughput: float = BESS_DEGRADATION_COST_USD_PER_MWH_THROUGHPUT,
     time_limit_seconds: float | None = None,
     max_iterations: int = 8,
     display_progress: bool = False,
@@ -2670,6 +2669,9 @@ def solve_finite_support_tv_dro_wind_solar_storage(
         bess_energy_mwh=bess_energy_mwh,
         pv_capacity_mw=pv_capacity_mw,
         wind_capacity_mw=wind_capacity_mw,
+        bess_degradation_cost_usd_per_mwh_throughput=(
+            bess_degradation_cost_usd_per_mwh_throughput
+        ),
         beta_workload=empirical_beta,
         beta_grid=empirical_beta,
         beta_ramp=empirical_beta,

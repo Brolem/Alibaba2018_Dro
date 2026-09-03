@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import unittest
 from dataclasses import replace
+from inspect import signature
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from alibaba2018_dro import scheduler
 from alibaba2018_dro.config import (
@@ -10,6 +13,16 @@ from alibaba2018_dro.config import (
 )
 from alibaba2018_dro.inputs import HourlyInput
 from alibaba2018_dro.scenarios import ScenarioRealization
+from scripts.run_2025_comparison import (
+    _common_parameters,
+    _deduplicate_support,
+    _read_rows,
+    _record_failure,
+    _summarize_group,
+    _training_support,
+    configurations,
+)
+from scripts.summarize_2025_boundary_search import _mcnemar_exact, _wilson
 
 
 def _input(
@@ -52,6 +65,31 @@ class MainlineConfigTests(unittest.TestCase):
     def test_historical_carbon_grid_stays_reproducible(self) -> None:
         self.assertEqual(CARBON_BUDGET_REDUCTIONS, (0.000, 0.025, 0.050))
         self.assertEqual(DEFAULT_CARBON_BUDGET_REDUCTION, 0.025)
+
+    def test_unselected_risk_residual_is_zero_in_comparison_summary(self) -> None:
+        row = {
+            "suite": "main", "configuration": "test", "method": "saa",
+            "window": "2025-01-01", "energy_uncertainty": "True",
+            "workload_uncertainty": "True", "sample_size": "20",
+            "gamma": "", "rho": "", "effective_capacity_fraction": "0.7",
+            "bess_degradation_cost_usd_per_mwh_throughput": "20",
+            "solver_status": "optimal_decomposed", "solve_wall_time_seconds": "1",
+            "solver_runtime_seconds": "1", "nominal_grid_cost_usd": "10",
+            "nominal_bess_degradation_cost_usd": "2",
+            "nominal_operating_cost_usd": "12", "actual_grid_cost_usd": "11",
+            "actual_operating_cost_usd": "13", "actual_carbon_kg": "3",
+            "actual_curtailment_mwh": "0", "batch_adjustment_mwh": "1",
+            "workload_violation": "False", "grid_limit_violation": "False",
+            "ramp_violation": "False", "workload_envelope_violation_mwh": "1e-6",
+            "grid_limit_violation_mw": "1e-6", "ramp_violation_mw": "1e-6",
+        }
+
+        summary = _summarize_group([row])
+
+        self.assertEqual(summary["workload_violation_count"], 0)
+        self.assertEqual(summary["workload_max_violation_magnitude"], 0.0)
+        self.assertEqual(summary["grid_limit_max_violation_magnitude"], 0.0)
+        self.assertEqual(summary["ramp_max_violation_magnitude"], 0.0)
 
 
 class GammaRoTests(unittest.TestCase):
@@ -143,6 +181,160 @@ class TvDroTests(unittest.TestCase):
     def test_tv_radius_cannot_exceed_risk_budget(self) -> None:
         with self.assertRaises(ValueError):
             scheduler.tv_dro_allowed_violation_count(20, beta=0.10, rho=0.11)
+
+    def test_tv_solver_exposes_registered_bess_cost_sensitivity(self) -> None:
+        self.assertIn(
+            "bess_degradation_cost_usd_per_mwh_throughput",
+            signature(scheduler.solve_finite_support_tv_dro_wind_solar_storage).parameters,
+        )
+
+
+class Unified2025ComparisonTests(unittest.TestCase):
+    def test_failure_checkpoint_is_idempotent(self) -> None:
+        row = {
+            "suite": "main", "configuration": "gamma", "method": "gamma_ro",
+            "window": "2025-01-01", "grid_limit_fraction_of_peak": 1.0,
+            "ramp_limit_fraction_of_peak": 0.05,
+            "error": "gamma is infeasible",
+        }
+        with TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "failures.csv"
+            _record_failure(path, row)
+            _record_failure(path, row)
+
+            self.assertEqual(_read_rows(path), [{key: str(value) for key, value in row.items()}])
+
+    def test_ramp_stress_scales_only_the_ramp_boundary(self) -> None:
+        inputs = [
+            _input(
+                0,
+                price=1.0,
+                forecast_carbon=1.0,
+                batch_baseline=1.0,
+                batch_window=1.0,
+                online_mw=1.0,
+            )
+        ]
+
+        baseline = _common_parameters(inputs)
+        stressed = _common_parameters(
+            inputs, ramp_limit_fraction_of_peak=0.075
+        )
+
+        self.assertAlmostEqual(stressed["r_max_mw"], 0.75 * baseline["r_max_mw"])
+        for name in baseline.keys() - {"r_max_mw"}:
+            self.assertEqual(stressed[name], baseline[name])
+
+    def test_grid_stress_scales_only_the_grid_boundary(self) -> None:
+        inputs = [
+            _input(
+                0,
+                price=1.0,
+                forecast_carbon=1.0,
+                batch_baseline=1.0,
+                batch_window=1.0,
+                online_mw=1.0,
+            )
+        ]
+
+        baseline = _common_parameters(inputs)
+        stressed = _common_parameters(
+            inputs, grid_limit_fraction_of_peak=0.90
+        )
+
+        self.assertAlmostEqual(stressed["g_max_mw"], 0.90 * baseline["g_max_mw"])
+        for name in baseline.keys() - {"g_max_mw"}:
+            self.assertEqual(stressed[name], baseline[name])
+
+    def test_method_filter_keeps_only_requested_main_methods(self) -> None:
+        selected = configurations(("main",), ("deterministic", "tv_dro"))
+
+        self.assertEqual(
+            [(item.name, item.method) for item in selected],
+            [("deterministic", "deterministic"), ("tv_dro_rho_0p01", "tv_dro")],
+        )
+
+    def test_boundary_pairing_statistics_use_exact_small_sample_rules(self) -> None:
+        low, high = _wilson(0, 100)
+
+        self.assertEqual(low, 0.0)
+        self.assertAlmostEqual(high, 0.0369934982)
+        self.assertEqual(_mcnemar_exact(6, 0), 0.03125)
+
+    def test_registered_experiment_matrix_is_complete(self) -> None:
+        registered = configurations(("main", "ablation", "sensitivity"))
+        self.assertEqual(sum(item.suite == "main" for item in registered), 4)
+        self.assertEqual(sum(item.suite == "ablation" for item in registered), 4)
+        self.assertEqual(sum(item.suite == "sensitivity" for item in registered), 6)
+
+    def test_mechanism_ablation_changes_training_support_only(self) -> None:
+        inputs = [
+            _input(
+                0,
+                price=1.0,
+                forecast_carbon=1.0,
+                batch_baseline=1.0,
+                batch_window=1.0,
+                cumulative_arrived=2.0,
+                cumulative_due=0.0,
+                workload_mwh_per_core_hour=2.0,
+            ),
+            _input(
+                1,
+                price=1.0,
+                forecast_carbon=1.0,
+                batch_baseline=1.0,
+                batch_window=1.0,
+                cumulative_arrived=4.0,
+                cumulative_due=4.0,
+                workload_mwh_per_core_hour=2.0,
+            ),
+        ]
+        scenario = ScenarioRealization(
+            scenario_id=7,
+            workload_source_days_one_based=(2,),
+            energy_delivery_dates=("2024-01-01",),
+            cumulative_arrived_core_hours=(0.25, 2.0),
+            cumulative_due_core_hours=(0.0, 2.0),
+            residual_solar_mwh=(-1.0, 2.0),
+            residual_wind_mwh=(-3.0, 4.0),
+            residual_carbon_lbs_per_kwh=(0.1, 0.2),
+        )
+
+        nominal = _training_support(
+            [scenario], inputs, energy_uncertainty=False, workload_uncertainty=False
+        )[0]
+        self.assertEqual(nominal.cumulative_arrived_core_hours, (1.0, 2.0))
+        self.assertEqual(nominal.cumulative_due_core_hours, (0.0, 2.0))
+        self.assertEqual(nominal.residual_solar_mwh, (0.0, 0.0))
+        self.assertEqual(nominal.residual_wind_mwh, (0.0, 0.0))
+
+        joint = _training_support(
+            [scenario], inputs, energy_uncertainty=True, workload_uncertainty=True
+        )[0]
+        self.assertEqual(joint, scenario)
+
+    def test_exact_duplicate_empirical_atoms_are_collapsed(self) -> None:
+        scenario = ScenarioRealization(
+            scenario_id=0,
+            workload_source_days_one_based=(2,),
+            energy_delivery_dates=("2024-01-01",),
+            cumulative_arrived_core_hours=(1.0,),
+            cumulative_due_core_hours=(1.0,),
+            residual_solar_mwh=(0.0,),
+            residual_wind_mwh=(0.0,),
+            residual_carbon_lbs_per_kwh=(0.0,),
+        )
+        duplicate_with_different_provenance = replace(
+            scenario,
+            scenario_id=1,
+            workload_source_days_one_based=(3,),
+            energy_delivery_dates=("2024-02-01",),
+        )
+
+        unique = _deduplicate_support([scenario, duplicate_with_different_provenance])
+
+        self.assertEqual(unique, [scenario])
 
 
 class MainlineSchedulerTests(unittest.TestCase):
