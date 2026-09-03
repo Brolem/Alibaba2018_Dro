@@ -112,9 +112,13 @@ c_{\mathrm{deg}}
 | 碳 | 预测/实际排放核算 | 只作为环境绩效输出，不参与可靠性约束 |
 | 能源不确定性 | 2024联合日块及SAA、静态Γ-RO、有限支持TV-DRO三折均已完成 | 冻结参数下统一回放；碳仅为评价属性 |
 | 算力容量 | 有效回放容量 $\kappa=0.7$ 与统一缩放 | $\kappa\in\{0.6,0.7,0.8\}$ 容量口径情景 |
-| 结果 | 旧确定性结果仅作过程证据；三风险 SAA 三折已选择 $N=20$ | 完成 SAA、RO、DRO 的统一比较结果 |
+| 结果 | 冻结参数下的2025统一比较、2×2机制消融及BESS成本/κ敏感性已完成 | 结果见 `data/results/comparison/unified_2025/` 与 `docs/research/current_results.md` |
 
-确定性、SAA、静态Γ-RO和有限支持TV-DRO入口依次为 `run_four_windows.py`、`run_uncertainty_methods.py`、`run_gamma_ro.py` 和 `run_tv_dro.py`。2024年362个可用日块及共同manifest已生成；三折校准冻结 $N=20$、$\Gamma=0.5$、$\rho=0.01$，三者各自的三类验证违反均为 `0/36`，单侧95% Wilson上界为6.99%。TV-DRO的三个正半径在当前N=20下具有相同的整数违反预算，故只将最小正半径作为通过门槛的代表，不宣称半径敏感性。下一步完成冻结参数下的统一2025比较。
+统一2025入口为 `scripts/run_2025_comparison.py`，一次执行确定性、SAA、静态Γ-RO、有限支持TV-DRO、2×2机制消融及必要敏感性。2024年362个可用日块及共同manifest已生成；三折校准冻结 $N=20$、$\Gamma=0.5$、$\rho=0.01$，三者各自的三类验证违反均为 `0/36`，单侧95% Wilson上界为6.99%。TV-DRO的三个正半径在当前N=20下具有相同的整数违反预算，故只将最小正半径作为通过门槛的代表，不宣称半径敏感性。正式2025结果的证据边界与解释见 `docs/research/current_results.md`。
+
+爬坡单因素压力使用同一入口的 `--ramp-limit-fraction-of-peak` 参数，并为每个非默认比例指定独立输出目录；跨档汇总入口为 `scripts/summarize_2025_ramp_stress.py`。0.075和0.06四方法结果完整，0.05在Γ-RO结构性不可行处按规则停止，详见 `docs/research/current_results.md` 第8节。
+
+低成本边界搜索可用 `--grid-limit-fraction-of-peak` 与 `--methods` 只运行指定物理边界、方法和窗口，并由 `scripts/summarize_2025_boundary_search.py` 统一汇总。固定爬坡比例0.075的实际2025能源路径上，并网比例在0.715625到0.7140625之间仍使夏秋风险从0%跳到100%；探索性2024联合残差块回放则在0.85和0.86形成“确定性8%--9%、TV-DRO 0%”的单窗口候选。两者证据层级不同，详见研究结果第9--10节。
 
 ## 7. 诚实边界
 
