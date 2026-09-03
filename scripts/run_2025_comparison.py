@@ -733,6 +733,15 @@ def _parse_args() -> argparse.Namespace:
         default=1.0,
         help="positive multiplier for bootstrap_2024 energy residuals",
     )
+    parser.add_argument(
+        "--energy-replay-seed",
+        type=int,
+        default=ENERGY_REPLAY_SEED,
+        help=(
+            "energy block-bootstrap seed; use a new explicit value for an "
+            "independent bootstrap confirmation run"
+        ),
+    )
     parser.add_argument("--replay-workers", type=int, default=4)
     parser.add_argument("--time-limit-seconds", type=float, default=300.0)
     parser.add_argument("--decomposition-max-iterations", type=int, default=8)
@@ -799,6 +808,11 @@ def main() -> None:
         raise ValueError("energy-residual-scale must be positive")
     if args.evaluation_energy_mode == "actual_2025" and abs(args.energy_residual_scale - 1.0) > 1e-12:
         raise ValueError("energy-residual-scale is only valid with bootstrap_2024")
+    if (
+        args.evaluation_energy_mode == "actual_2025"
+        and args.energy_replay_seed != ENERGY_REPLAY_SEED
+    ):
+        raise ValueError("energy-replay-seed is only valid with bootstrap_2024")
     experiments = tuple(dict.fromkeys(args.experiments))
     methods = tuple(dict.fromkeys(args.methods))
     windows = tuple(dict.fromkeys(args.windows))
@@ -849,7 +863,7 @@ def main() -> None:
         config_payload["parameters"].update(
             {
                 "evaluation_energy_mode": args.evaluation_energy_mode,
-                "energy_replay_seed": ENERGY_REPLAY_SEED,
+                "energy_replay_seed": args.energy_replay_seed,
                 "energy_residual_scale": args.energy_residual_scale,
             }
         )
@@ -881,7 +895,7 @@ def main() -> None:
         attach_bootstrap_energy_replay(
             replay_templates,
             calibration_csv=args.calibration_csv,
-            energy_seed=ENERGY_REPLAY_SEED,
+            energy_seed=args.energy_replay_seed,
             residual_scale=args.energy_residual_scale,
         )
         if args.evaluation_energy_mode == "bootstrap_2024"

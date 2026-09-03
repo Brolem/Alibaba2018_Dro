@@ -201,10 +201,16 @@ class ScenarioManifestTests(unittest.TestCase):
                 workload_replays,
                 calibration_csv=output_directory / CALIBRATION_BLOCKS_FILENAME,
             )
+            confirmation_energy_replays = attach_bootstrap_energy_replay(
+                workload_replays,
+                calibration_csv=output_directory / CALIBRATION_BLOCKS_FILENAME,
+                energy_seed=20260903,
+            )
             self.assertEqual(len(energy_replays), 100)
             self.assertEqual(len(energy_replays[0].energy_delivery_dates), 30)
             self.assertEqual(len(energy_replays[0].residual_solar_mwh), 720)
             self.assertEqual(energy_replays, repeated_energy_replays)
+            self.assertNotEqual(energy_replays, confirmation_energy_replays)
             self.assertEqual(
                 energy_replays[0].cumulative_arrived_core_hours,
                 workload_replays[0].cumulative_arrived_core_hours,

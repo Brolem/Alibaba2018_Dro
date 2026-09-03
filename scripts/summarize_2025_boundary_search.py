@@ -6,6 +6,7 @@ import argparse
 import csv
 import json
 import math
+import statistics
 from pathlib import Path
 from typing import Sequence
 
@@ -77,9 +78,17 @@ def _boundary(directory: Path) -> tuple[float, float]:
     )
 
 
-def summarize(search_root: Path, peak_load_mw: float) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+def summarize(
+    search_root: Path,
+    peak_load_mw: float,
+) -> tuple[
+    list[dict[str, object]],
+    list[dict[str, object]],
+    list[dict[str, object]],
+]:
     summaries: list[dict[str, object]] = []
     pairs: list[dict[str, object]] = []
+    cluster_pairs: list[dict[str, object]] = []
     for directory in sorted(path for path in search_root.iterdir() if path.is_dir()):
         config_path = directory / "run_config.json"
         if not config_path.exists():
@@ -191,7 +200,103 @@ def summarize(search_root: Path, peak_load_mw: float) -> tuple[list[dict[str, ob
                     ),
                 }
             )
-    return summaries, pairs
+        det_by_window = {
+            window: {
+                row["workload_replay_id"]: row
+                for row in grouped.get(("deterministic", window), [])
+            }
+            for window in windows
+        }
+        tv_by_window = {
+            window: {
+                row["workload_replay_id"]: row
+                for row in grouped.get(("tv_dro", window), [])
+            }
+            for window in windows
+        }
+        if windows and all(det_by_window[window] and tv_by_window[window] for window in windows):
+            common_ids = sorted(
+                set.intersection(
+                    *(set(det_by_window[window]) & set(tv_by_window[window]) for window in windows)
+                ),
+                key=int,
+            )
+            if common_ids:
+                det_events = {
+                    item: any(
+                        _physical_violation(det_by_window[window][item])
+                        for window in windows
+                    )
+                    for item in common_ids
+                }
+                tv_events = {
+                    item: any(
+                        _physical_violation(tv_by_window[window][item])
+                        for window in windows
+                    )
+                    for item in common_ids
+                }
+                det_count = sum(det_events.values())
+                tv_count = sum(tv_events.values())
+                det_only = sum(det_events[item] and not tv_events[item] for item in common_ids)
+                tv_only = sum(tv_events[item] and not det_events[item] for item in common_ids)
+                det_rows = [det_by_window[window][item] for item in common_ids for window in windows]
+                tv_rows = [tv_by_window[window][item] for item in common_ids for window in windows]
+                det_max = max(_physical_magnitude(row) for row in det_rows)
+                tv_max = max(_physical_magnitude(row) for row in tv_rows)
+                magnitude_ratio = tv_max / det_max if det_max > 0.0 else 0.0
+                det_rate = det_count / len(common_ids)
+                tv_rate = tv_count / len(common_ids)
+                risk_difference = det_rate - tv_rate
+                det_low, det_high = _wilson(det_count, len(common_ids))
+                tv_low, tv_high = _wilson(tv_count, len(common_ids))
+                frequency_gate = (
+                    0.08 <= det_rate <= 0.20
+                    and tv_rate <= 0.02
+                    and risk_difference >= 0.06
+                )
+                cluster_pairs.append(
+                    {
+                        "directory": directory.name,
+                        "grid_limit_fraction_of_peak": grid_fraction,
+                        "ramp_limit_fraction_of_peak": ramp_fraction,
+                        "aggregation": "scenario_id_any_across_windows",
+                        "forecast_context_count": len(windows),
+                        "paired_replay_count": len(common_ids),
+                        "deterministic_physical_violation_rate": det_rate,
+                        "deterministic_wilson_low": det_low,
+                        "deterministic_wilson_high": det_high,
+                        "tv_dro_physical_violation_rate": tv_rate,
+                        "tv_dro_wilson_low": tv_low,
+                        "tv_dro_wilson_high": tv_high,
+                        "paired_risk_reduction_percentage_points": 100.0 * risk_difference,
+                        "deterministic_only_violation_count": det_only,
+                        "tv_dro_only_violation_count": tv_only,
+                        "mcnemar_exact_two_sided_p": _mcnemar_exact(det_only, tv_only),
+                        "deterministic_max_physical_violation_mw": det_max,
+                        "tv_dro_max_physical_violation_mw": tv_max,
+                        "tv_to_deterministic_max_magnitude_ratio": magnitude_ratio,
+                        "mean_actual_cost_deterministic_usd": statistics.fmean(
+                            float(row["actual_operating_cost_usd"]) for row in det_rows
+                        ),
+                        "mean_actual_cost_tv_dro_usd": statistics.fmean(
+                            float(row["actual_operating_cost_usd"]) for row in tv_rows
+                        ),
+                        "mean_actual_cost_tv_minus_deterministic_usd": statistics.fmean(
+                            float(tv_by_window[window][item]["actual_operating_cost_usd"])
+                            - float(det_by_window[window][item]["actual_operating_cost_usd"])
+                            for item in common_ids
+                            for window in windows
+                        ),
+                        "frequency_gate_met": frequency_gate,
+                        "strict_gate_met": (
+                            frequency_gate
+                            and det_max >= 0.005 * peak_load_mw
+                            and magnitude_ratio <= 0.20
+                        ),
+                    }
+                )
+    return summaries, pairs, cluster_pairs
 
 
 def main() -> None:
@@ -203,11 +308,13 @@ def main() -> None:
     )
     parser.add_argument("--peak-load-mw", type=float, default=1.70202528)
     args = parser.parse_args()
-    summaries, pairs = summarize(args.search_root, args.peak_load_mw)
+    summaries, pairs, cluster_pairs = summarize(args.search_root, args.peak_load_mw)
     _write(args.search_root / "boundary_search_summary.csv", summaries)
     _write(args.search_root / "boundary_pairwise.csv", pairs)
+    _write(args.search_root / "boundary_cluster_pairwise.csv", cluster_pairs)
     print("summary_rows:", len(summaries))
     print("pairwise_rows:", len(pairs))
+    print("cluster_pairwise_rows:", len(cluster_pairs))
 
 
 if __name__ == "__main__":
