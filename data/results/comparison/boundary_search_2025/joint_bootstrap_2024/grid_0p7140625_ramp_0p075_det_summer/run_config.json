@@ -1,0 +1,51 @@
+{
+  "experiments": [
+    "main"
+  ],
+  "interpretation": "four 2025 forecast contexts; within each window 100 workload trajectories are paired by scenario id with reproducible 2024 joint 24h energy-residual block bootstraps; this is a boundary-discovery stress experiment, not 100 independent observed 2025 energy samples",
+  "parameters": {
+    "beta": 0.1,
+    "configurations": [
+      {
+        "bess_degradation_cost": 20.0,
+        "effective_capacity_fraction": 0.7,
+        "energy_uncertainty": true,
+        "method": "deterministic",
+        "name": "deterministic",
+        "suite": "main",
+        "workload_uncertainty": true
+      }
+    ],
+    "decomposition_max_iterations": 8,
+    "energy_replay_seed": 20250811,
+    "energy_residual_scale": 1.0,
+    "evaluation_energy_mode": "bootstrap_2024",
+    "gamma": 0.5,
+    "gamma_energy_quantile": 0.9,
+    "grid_limit_fraction_of_peak": 0.7140625,
+    "ramp_limit_fraction_of_peak": 0.075,
+    "recourse_lexicographic_order": [
+      "minimum_total_three_risk_violations",
+      "minimum_DAM_grid_cost",
+      "minimum_batch_adjustment",
+      "minimum_total_grid_import"
+    ],
+    "replay_workers": 4,
+    "rho": 0.01,
+    "sample_size": 20,
+    "time_limit_seconds_per_solve": 300.0
+  },
+  "protocol": "unified_2025_forecast_contexts_100_joint_workload_energy_bootstrap_replays_v1",
+  "schema_version": 1,
+  "source_sha256": {
+    "aggregate_workload": "59A80BBB434AF8E27BF47920CBF62190E8631175E01B3F5CEA8F28D4E7973CAB",
+    "calibration_day_blocks": "585CFEC3EDC8FE651D65A7E9B2908F954078986EA3C0D7D4C74C7481BFD366ED",
+    "energy_2025-07-01": "7EDCA96A970E0F4C6E59146DE9A8092DBF65720076D644A1455B5CFCC52D598B",
+    "manifest": "5FB3F06DACA45991FAFA1B33CF14BE017608C0DEAA06611E59C94981A390351A",
+    "nominal_workload": "91E67548DDBF8B1A94E720B8ECF1F6E73584FA6868199EC3728584DD2D05EC5A",
+    "workload_stats": "37705A3DB357E5CC42B0D6332FFEC543365C59E01FD5B5B22CB7BFBAAB4AFFFB"
+  },
+  "windows": [
+    "2025-07-01"
+  ]
+}

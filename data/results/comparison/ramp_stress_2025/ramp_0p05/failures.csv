@@ -1,0 +1,2 @@
+suite,configuration,method,window,ramp_limit_fraction_of_peak,error
+main,gamma_ro_gamma_0p5,gamma_ro,2025-01-01,0.05,gamma_ro_gamma_0p5 is infeasible
