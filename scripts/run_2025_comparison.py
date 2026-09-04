@@ -320,6 +320,25 @@ def _common_parameters(
     }
 
 
+def _deterministic_planning_parameters(
+    inputs: Sequence[HourlyInput],
+    physical_common: dict[str, float],
+    *,
+    headroom_fraction_of_peak: float = 0.0,
+) -> dict[str, float]:
+    """Reserve equal grid and ramp headroom in planning, not evaluation."""
+
+    if headroom_fraction_of_peak < 0.0:
+        raise ValueError("headroom_fraction_of_peak must be nonnegative")
+    planning_common = dict(physical_common)
+    headroom_mw = headroom_fraction_of_peak * _peak_load(list(inputs))
+    planning_common["g_max_mw"] -= headroom_mw
+    planning_common["r_max_mw"] -= headroom_mw
+    if planning_common["g_max_mw"] <= 0.0 or planning_common["r_max_mw"] <= 0.0:
+        raise ValueError("deterministic planning headroom leaves a nonpositive boundary")
+    return planning_common
+
+
 def _solve(
     config: Configuration,
     inputs: list[HourlyInput],
@@ -332,6 +351,7 @@ def _solve(
     replay_workers: int,
     grid_limit_fraction_of_peak: float = 1.0,
     ramp_limit_fraction_of_peak: float = 0.10,
+    deterministic_constraint_headroom_fraction_of_peak: float = 0.0,
 ) -> tuple[SolvedPlan, dict[str, float]]:
     common = _common_parameters(
         inputs,
@@ -352,9 +372,16 @@ def _solve(
             )
     started = time.perf_counter()
     if config.method == "deterministic":
+        planning_common = _deterministic_planning_parameters(
+            inputs,
+            common,
+            headroom_fraction_of_peak=(
+                deterministic_constraint_headroom_fraction_of_peak
+            ),
+        )
         plan = solve_wind_solar_storage(
             inputs,
-            **common,
+            **planning_common,
             bess_degradation_cost_usd_per_mwh_throughput=config.bess_degradation_cost,
             day_ahead_solver="gurobi",
         )
@@ -757,6 +784,16 @@ def _parse_args() -> argparse.Namespace:
         default=0.10,
         help="R_max / P_peak; use a separate output directory for stress runs",
     )
+    parser.add_argument(
+        "--deterministic-constraint-headroom-fraction-of-peak",
+        type=float,
+        default=0.0,
+        help=(
+            "planning-only deterministic reserve subtracted from both G_max and "
+            "R_max as a fraction of P_peak; replay evaluation keeps the physical "
+            "grid and ramp boundaries unchanged"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -804,6 +841,10 @@ def main() -> None:
         raise ValueError("grid-limit-fraction-of-peak must be in (0, 1]")
     if not 0.0 < args.ramp_limit_fraction_of_peak <= 1.0:
         raise ValueError("ramp-limit-fraction-of-peak must be in (0, 1]")
+    if args.deterministic_constraint_headroom_fraction_of_peak < 0.0:
+        raise ValueError(
+            "deterministic-constraint-headroom-fraction-of-peak must be nonnegative"
+        )
     if args.energy_residual_scale <= 0.0:
         raise ValueError("energy-residual-scale must be positive")
     if args.evaluation_energy_mode == "actual_2025" and abs(args.energy_residual_scale - 1.0) > 1e-12:
@@ -819,6 +860,13 @@ def main() -> None:
     selected_configs = configurations(experiments, methods)
     if not selected_configs:
         raise ValueError("the selected experiments contain none of the selected methods")
+    if (
+        args.deterministic_constraint_headroom_fraction_of_peak > 0.0
+        and any(config.method != "deterministic" for config in selected_configs)
+    ):
+        raise ValueError(
+            "deterministic planning headroom requires a deterministic-only run"
+        )
     args.output_directory.mkdir(parents=True, exist_ok=True)
     run_path = args.output_directory / "replay_runs.csv"
     config_path = args.output_directory / "run_config.json"
@@ -877,6 +925,10 @@ def main() -> None:
         config_payload["parameters"]["grid_limit_fraction_of_peak"] = (
             args.grid_limit_fraction_of_peak
         )
+    if args.deterministic_constraint_headroom_fraction_of_peak > 0.0:
+        config_payload["parameters"][
+            "deterministic_constraint_headroom_fraction_of_peak"
+        ] = args.deterministic_constraint_headroom_fraction_of_peak
     if config_path.exists() and json.loads(config_path.read_text(encoding="utf-8")) != config_payload:
         raise ValueError("existing run_config.json differs; use another output directory")
     if not config_path.exists():
@@ -917,14 +969,21 @@ def main() -> None:
             args.output_directory, run_path, selected_configs, windows, experiments
         )
 
-    solve_cache: dict[tuple[tuple[object, ...], str], tuple[SolvedPlan, dict[str, float], list[dict[str, object]]]] = {}
+    solve_cache: dict[
+        tuple[tuple[object, ...], str, float],
+        tuple[SolvedPlan, dict[str, float], list[dict[str, object]]],
+    ] = {}
     for config in selected_configs:
         for window in windows:
             output_key = (config.suite, config.name, window)
             if counts.get(output_key) == 100:
                 print("skip:", *output_key, flush=True)
                 continue
-            cache_key = (config.solve_signature, window)
+            cache_key = (
+                config.solve_signature,
+                window,
+                args.deterministic_constraint_headroom_fraction_of_peak,
+            )
             if cache_key not in solve_cache:
                 print("solve_start:", config.name, window, flush=True)
                 inputs = build_hourly_input(
@@ -943,6 +1002,9 @@ def main() -> None:
                         ramp_limit_fraction_of_peak=(
                             args.ramp_limit_fraction_of_peak
                         ),
+                        deterministic_constraint_headroom_fraction_of_peak=(
+                            args.deterministic_constraint_headroom_fraction_of_peak
+                        ),
                     )
                 except RuntimeError as error:
                     _record_failure(
@@ -957,6 +1019,9 @@ def main() -> None:
                             ),
                             "ramp_limit_fraction_of_peak": (
                                 args.ramp_limit_fraction_of_peak
+                            ),
+                            "deterministic_constraint_headroom_fraction_of_peak": (
+                                args.deterministic_constraint_headroom_fraction_of_peak
                             ),
                             "error": str(error),
                         },

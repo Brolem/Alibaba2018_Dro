@@ -17,6 +17,7 @@ from alibaba2018_dro.scenarios import ScenarioRealization
 from scripts.run_2025_comparison import (
     _common_parameters,
     _deduplicate_support,
+    _deterministic_planning_parameters,
     _read_rows,
     _record_failure,
     _summarize_group,
@@ -246,6 +247,57 @@ class Unified2025ComparisonTests(unittest.TestCase):
         self.assertAlmostEqual(stressed["g_max_mw"], 0.90 * baseline["g_max_mw"])
         for name in baseline.keys() - {"g_max_mw"}:
             self.assertEqual(stressed[name], baseline[name])
+
+    def test_deterministic_headroom_changes_planning_boundaries_only(self) -> None:
+        inputs = [
+            _input(
+                0,
+                price=1.0,
+                forecast_carbon=1.0,
+                batch_baseline=1.0,
+                batch_window=1.0,
+                online_mw=1.0,
+            )
+        ]
+        physical = _common_parameters(
+            inputs,
+            grid_limit_fraction_of_peak=0.85,
+            ramp_limit_fraction_of_peak=0.075,
+        )
+        unchanged = dict(physical)
+
+        planning = _deterministic_planning_parameters(
+            inputs, physical, headroom_fraction_of_peak=0.01
+        )
+
+        peak = planning["bess_energy_mwh"]
+        self.assertAlmostEqual(planning["g_max_mw"], physical["g_max_mw"] - 0.01 * peak)
+        self.assertAlmostEqual(planning["r_max_mw"], physical["r_max_mw"] - 0.01 * peak)
+        self.assertEqual(physical, unchanged)
+        for name in physical.keys() - {"g_max_mw", "r_max_mw"}:
+            self.assertEqual(planning[name], physical[name])
+
+    def test_deterministic_headroom_rejects_invalid_boundaries(self) -> None:
+        inputs = [
+            _input(
+                0,
+                price=1.0,
+                forecast_carbon=1.0,
+                batch_baseline=1.0,
+                batch_window=1.0,
+                online_mw=1.0,
+            )
+        ]
+        physical = _common_parameters(inputs)
+
+        with self.assertRaises(ValueError):
+            _deterministic_planning_parameters(
+                inputs, physical, headroom_fraction_of_peak=-0.01
+            )
+        with self.assertRaises(ValueError):
+            _deterministic_planning_parameters(
+                inputs, physical, headroom_fraction_of_peak=0.10
+            )
 
     def test_method_filter_keeps_only_requested_main_methods(self) -> None:
         selected = configurations(("main",), ("deterministic", "tv_dro"))
