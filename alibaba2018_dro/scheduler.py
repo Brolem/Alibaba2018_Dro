@@ -30,6 +30,7 @@ except ImportError:  # pragma: no cover
 
 
 LBS_PER_KG = 0.45359237
+BATCH_RECOURSE_GRID_COST_LOCK_TOLERANCE_USD = 1e-4
 BATCH_RECOURSE_DEVIATION_LOCK_TOLERANCE_MWH = 1e-5
 
 
@@ -1880,7 +1881,10 @@ def _replay_joint_scenario_with_batch_recourse_gurobi(
             f"Gurobi batch recourse cost stage is {model.Status}"
         )
     grid_cost_value = model.ObjVal
-    grid_cost_tolerance = max(1e-6, abs(grid_cost_value) * 1e-9)
+    grid_cost_tolerance = max(
+        BATCH_RECOURSE_GRID_COST_LOCK_TOLERANCE_USD,
+        abs(grid_cost_value) * 1e-9,
+    )
     model.addConstr(
         grid_cost_expr <= grid_cost_value + grid_cost_tolerance,
         name="fix_grid_cost",

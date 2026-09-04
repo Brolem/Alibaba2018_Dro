@@ -700,10 +700,14 @@ class MainlineSchedulerTests(unittest.TestCase):
             p_grid_initial_mw=0.0,
             recourse_solver="gurobi",
         )
-        self.assertAlmostEqual(replay.batch[0], 0.0, places=5)
-        self.assertAlmostEqual(replay.batch[1], 1.0, places=5)
-        self.assertAlmostEqual(replay.grid_cost, 1.0, places=5)
-        self.assertAlmostEqual(replay.batch_adjustment_mwh, 2.0, places=5)
+        cost_tolerance = scheduler.BATCH_RECOURSE_GRID_COST_LOCK_TOLERANCE_USD
+        self.assertLessEqual(replay.grid_cost - 1.0, cost_tolerance + 1e-8)
+        self.assertLessEqual(replay.batch[0], cost_tolerance / 9.0 + 1e-8)
+        self.assertAlmostEqual(sum(replay.batch), 1.0, places=7)
+        self.assertGreaterEqual(
+            replay.batch_adjustment_mwh,
+            2.0 - 2.0 * cost_tolerance / 9.0 - 1e-8,
+        )
 
     def test_removed_scip_solver_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "must be 'gurobi'"):
@@ -742,6 +746,10 @@ class MainlineSchedulerTests(unittest.TestCase):
         self.assertEqual(
             scheduler.BATCH_RECOURSE_DEVIATION_LOCK_TOLERANCE_MWH,
             1e-5,
+        )
+        self.assertEqual(
+            scheduler.BATCH_RECOURSE_GRID_COST_LOCK_TOLERANCE_USD,
+            1e-4,
         )
 
     def test_cumulative_envelope_prevents_early_and_late_batch_execution(self) -> None:
