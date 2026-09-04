@@ -5,6 +5,7 @@ from dataclasses import replace
 from inspect import signature
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from alibaba2018_dro import scheduler
 from alibaba2018_dro.config import (
@@ -655,6 +656,41 @@ class MainlineSchedulerTests(unittest.TestCase):
     def test_removed_scip_solver_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "must be 'gurobi'"):
             scheduler._day_ahead_model("removed_scip", "scip")
+
+    def test_recourse_failure_reports_scenario_id(self) -> None:
+        scenario = ScenarioRealization(
+            scenario_id=91,
+            workload_source_days_one_based=(),
+            energy_delivery_dates=(),
+            cumulative_arrived_core_hours=(),
+            cumulative_due_core_hours=(),
+            residual_solar_mwh=(),
+            residual_wind_mwh=(),
+            residual_carbon_lbs_per_kwh=(),
+        )
+        with patch.object(
+            scheduler,
+            "_replay_joint_scenario_with_batch_recourse_gurobi",
+            side_effect=RuntimeError("tie-break failed"),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError, "scenario_id=91: tie-break failed"
+            ):
+                scheduler.replay_joint_scenario_with_batch_recourse(
+                    [],
+                    None,  # type: ignore[arg-type]
+                    scenario,
+                    pv_capacity_mw=0.0,
+                    wind_capacity_mw=0.0,
+                    g_max_mw=0.0,
+                    r_max_mw=0.0,
+                    p_grid_initial_mw=0.0,
+                )
+
+        self.assertEqual(
+            scheduler.BATCH_RECOURSE_DEVIATION_LOCK_TOLERANCE_MWH,
+            1e-5,
+        )
 
     def test_cumulative_envelope_prevents_early_and_late_batch_execution(self) -> None:
         inputs = [

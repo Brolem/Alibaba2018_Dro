@@ -30,6 +30,7 @@ except ImportError:  # pragma: no cover
 
 
 LBS_PER_KG = 0.45359237
+BATCH_RECOURSE_DEVIATION_LOCK_TOLERANCE_MWH = 1e-5
 
 
 class _GurobiModelAdapter:
@@ -1866,9 +1867,11 @@ def _replay_joint_scenario_with_batch_recourse_gurobi(
         round(violation_grid.X),
         round(violation_ramp.X),
     )
-    model.addConstr(violation_workload == selected_risk[0])
-    model.addConstr(violation_grid == selected_risk[1])
-    model.addConstr(violation_ramp == selected_risk[2])
+    model.addConstr(
+        violation_workload == selected_risk[0], name="fix_violate_workload"
+    )
+    model.addConstr(violation_grid == selected_risk[1], name="fix_violate_grid")
+    model.addConstr(violation_ramp == selected_risk[2], name="fix_violate_ramp")
     grid_cost_expr = gp.quicksum(prices[t] * grid[t] for t in range(hours))
     model.setObjective(grid_cost_expr, gp.GRB.MINIMIZE)
     model.optimize()
@@ -1877,9 +1880,10 @@ def _replay_joint_scenario_with_batch_recourse_gurobi(
             f"Gurobi batch recourse cost stage is {model.Status}"
         )
     grid_cost_value = model.ObjVal
+    grid_cost_tolerance = max(1e-6, abs(grid_cost_value) * 1e-9)
     model.addConstr(
-        grid_cost_expr
-        <= grid_cost_value + max(1e-6, abs(grid_cost_value) * 1e-9)
+        grid_cost_expr <= grid_cost_value + grid_cost_tolerance,
+        name="fix_grid_cost",
     )
     total_deviation = gp.quicksum(deviations)
     model.setObjective(total_deviation, gp.GRB.MINIMIZE)
@@ -1889,15 +1893,26 @@ def _replay_joint_scenario_with_batch_recourse_gurobi(
             f"Gurobi batch recourse adjustment stage is {model.Status}"
         )
     deviation_value = model.ObjVal
+    # 720 个小时偏差变量的求和在更换第四层目标时会产生约 1e-6 MWh
+    # 的重构误差。10 Wh 的绝对锁定容差仍远低于结果报告精度，并避免
+    # 已有第三层最优解被 Gurobi 在第四层误判为不可行。
+    deviation_tolerance = max(
+        BATCH_RECOURSE_DEVIATION_LOCK_TOLERANCE_MWH,
+        abs(deviation_value) * 1e-9,
+    )
     model.addConstr(
-        total_deviation
-        <= deviation_value + max(1e-6, abs(deviation_value) * 1e-9)
+        total_deviation <= deviation_value + deviation_tolerance,
+        name="fix_total_deviation",
     )
     model.setObjective(gp.quicksum(grid.values()), gp.GRB.MINIMIZE)
     model.optimize()
     if model.Status != gp.GRB.OPTIMAL:
         raise RuntimeError(
-            f"Gurobi batch recourse tie-break stage is {model.Status}"
+            "Gurobi batch recourse tie-break stage is "
+            f"{model.Status}; grid_cost={grid_cost_value:.17g}; "
+            f"grid_cost_tolerance={grid_cost_tolerance:.17g}; "
+            f"deviation={deviation_value:.17g}; "
+            f"deviation_tolerance={deviation_tolerance:.17g}"
         )
 
     batch_values = [batch[t].X for t in range(hours)]
@@ -1981,19 +1996,24 @@ def replay_joint_scenario_with_batch_recourse(
 
     if recourse_solver != "gurobi":
         raise ValueError("recourse_solver must be 'gurobi'")
-    return _replay_joint_scenario_with_batch_recourse_gurobi(
-        inputs,
-        plan,
-        scenario,
-        pv_capacity_mw=pv_capacity_mw,
-        wind_capacity_mw=wind_capacity_mw,
-        g_max_mw=g_max_mw,
-        r_max_mw=r_max_mw,
-        p_grid_initial_mw=p_grid_initial_mw,
-        solar_reference_mwh=solar_reference_mwh,
-        wind_reference_mwh=wind_reference_mwh,
-        tolerance=tolerance,
-    )
+    try:
+        return _replay_joint_scenario_with_batch_recourse_gurobi(
+            inputs,
+            plan,
+            scenario,
+            pv_capacity_mw=pv_capacity_mw,
+            wind_capacity_mw=wind_capacity_mw,
+            g_max_mw=g_max_mw,
+            r_max_mw=r_max_mw,
+            p_grid_initial_mw=p_grid_initial_mw,
+            solar_reference_mwh=solar_reference_mwh,
+            wind_reference_mwh=wind_reference_mwh,
+            tolerance=tolerance,
+        )
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"scenario_id={scenario.scenario_id}: {exc}"
+        ) from exc
 
 
 def solve_carbon_recourse_subproblem(
