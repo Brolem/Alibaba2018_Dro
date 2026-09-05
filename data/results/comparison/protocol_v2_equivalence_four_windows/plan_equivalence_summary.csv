@@ -1,0 +1,5 @@
+window,reference_configuration,candidate_configuration,operating_cost_difference_usd,max_abs_batch_difference,max_abs_grid_difference,max_abs_bess_charge_difference,max_abs_bess_discharge_difference,max_abs_curtailment_difference,candidate_max_simultaneous_charge_discharge_mw
+2025-01-01,deterministic,tv_dro_energy_0_workload_0,-5.4569682106375694e-12,7.623224274055929e-11,4.573863510159981e-11,7.623224274055929e-11,4.573852407929735e-11,0.0,0.0
+2025-04-01,deterministic,tv_dro_energy_0_workload_0,0.0,2.5118213965724667e-07,2.511821396433689e-07,2.95515278914138e-11,9.103828801926284e-14,0.0,0.0
+2025-07-01,deterministic,tv_dro_energy_0_workload_0,-2.546585164964199e-11,1.880099270712421e-09,1.8800992429568453e-09,3.5482727867020003e-13,2.473021787352536e-13,0.0,0.0
+2025-10-01,deterministic,tv_dro_energy_0_workload_0,2.1827872842550278e-11,4.2152559220909325e-10,4.215254811867908e-10,4.215254811867908e-10,1.2645734459582059e-10,0.0,0.0
