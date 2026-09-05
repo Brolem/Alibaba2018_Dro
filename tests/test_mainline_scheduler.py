@@ -197,6 +197,8 @@ class Unified2025ComparisonTests(unittest.TestCase):
             "suite": "main", "configuration": "gamma", "method": "gamma_ro",
             "window": "2025-01-01", "grid_limit_fraction_of_peak": 1.0,
             "ramp_limit_fraction_of_peak": 0.05,
+            "deterministic_constraint_headroom_fraction_of_peak": 0.0,
+            "phase": "solve",
             "error": "gamma is infeasible",
         }
         with TemporaryDirectory() as temporary_directory:
@@ -306,6 +308,20 @@ class Unified2025ComparisonTests(unittest.TestCase):
             [(item.name, item.method) for item in selected],
             [("deterministic", "deterministic"), ("tv_dro_rho_0p01", "tv_dro")],
         )
+
+    def test_configuration_filter_supports_low_cost_diagnostics(self) -> None:
+        selected = configurations(
+            ("main", "ablation"),
+            ("deterministic", "tv_dro"),
+            ("deterministic", "tv_dro_energy_0_workload_0"),
+        )
+
+        self.assertEqual(
+            [item.name for item in selected],
+            ["deterministic", "tv_dro_energy_0_workload_0"],
+        )
+        with self.assertRaisesRegex(ValueError, "unknown configuration"):
+            configurations(("main",), names=("not_registered",))
 
     def test_boundary_pairing_statistics_use_exact_small_sample_rules(self) -> None:
         low, high = _wilson(0, 100)
@@ -709,6 +725,60 @@ class MainlineSchedulerTests(unittest.TestCase):
             2.0 - 2.0 * cost_tolerance / 9.0 - 1e-8,
         )
 
+    def test_recourse_locks_total_risk_before_selecting_violation_channel(self) -> None:
+        inputs = [
+            _input(
+                0,
+                price=10.0,
+                forecast_carbon=0.5,
+                batch_baseline=0.0,
+                batch_window=0.0,
+                online_mw=1.0,
+                forecast_solar=1.0,
+                cumulative_arrived=0.0,
+                cumulative_due=0.0,
+                workload_mwh_per_core_hour=1.0,
+            )
+        ]
+        plan = scheduler.solve_wind_solar_storage(
+            inputs,
+            g_max_mw=2.0,
+            r_max_mw=2.0,
+            p_grid_initial_mw=1.0,
+            bess_power_mw=0.0,
+            bess_energy_mwh=0.0,
+            pv_capacity_mw=0.6,
+            wind_capacity_mw=0.0,
+            solar_reference_mwh=1.0,
+        )
+        scenario = ScenarioRealization(
+            scenario_id=7,
+            workload_source_days_one_based=(2,),
+            energy_delivery_dates=("2025-01-01",),
+            cumulative_arrived_core_hours=(0.0,),
+            cumulative_due_core_hours=(0.0,),
+            residual_solar_mwh=(0.0,),
+            residual_wind_mwh=(0.0,),
+            residual_carbon_lbs_per_kwh=(0.0,),
+        )
+
+        replay = scheduler.replay_joint_scenario_with_batch_recourse(
+            inputs,
+            plan,
+            scenario,
+            pv_capacity_mw=0.6,
+            wind_capacity_mw=0.0,
+            g_max_mw=0.5,
+            r_max_mw=0.2,
+            p_grid_initial_mw=1.0,
+            solar_reference_mwh=1.0,
+        )
+
+        self.assertFalse(replay.workload_violation)
+        self.assertFalse(replay.grid_limit_violation)
+        self.assertTrue(replay.ramp_violation)
+        self.assertAlmostEqual(replay.grid[0], 0.4, places=5)
+
     def test_removed_scip_solver_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "must be 'gurobi'"):
             scheduler._day_ahead_model("removed_scip", "scip")
@@ -938,8 +1008,19 @@ class MainlineSchedulerTests(unittest.TestCase):
             bess_degradation_cost_usd_per_mwh_throughput=20.0,
         )
 
-        self.assertAlmostEqual(result.bess_degradation_cost, 40.0, places=6)
-        self.assertAlmostEqual(result.operating_cost, 60.0, places=6)
+        self.assertAlmostEqual(
+            result.bess_degradation_cost,
+            20.0 * (sum(result.bess_charge) + sum(result.bess_discharge)),
+            places=7,
+        )
+        self.assertAlmostEqual(
+            result.bess_degradation_cost, 40.0,
+            delta=2 * scheduler.DAY_AHEAD_COST_LOCK_TOLERANCE_USD,
+        )
+        self.assertAlmostEqual(
+            result.operating_cost, 60.0,
+            delta=scheduler.DAY_AHEAD_COST_LOCK_TOLERANCE_USD + 1e-8,
+        )
         self.assertTrue(
             all(
                 charge * discharge <= 1e-9

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import hashlib
 import time
 from concurrent.futures import ProcessPoolExecutor
 from functools import partial
@@ -32,6 +33,31 @@ except ImportError:  # pragma: no cover
 LBS_PER_KG = 0.45359237
 BATCH_RECOURSE_GRID_COST_LOCK_TOLERANCE_USD = 1e-4
 BATCH_RECOURSE_DEVIATION_LOCK_TOLERANCE_MWH = 1e-5
+DAY_AHEAD_COST_LOCK_TOLERANCE_USD = 1e-4
+
+
+def _canonical_day_ahead_tie_break(model, primary_objective, *variable_groups):
+    """Common sample-independent linear tie rule on the near-optimal cost face.
+
+    SHA-256 weights depend only on variable names, never on model row order,
+    method, training or evaluation samples. This is not a uniqueness theorem;
+    equivalent formulations must still be compared numerically.
+    """
+    optimum = model.getObjVal()
+    model.addCons(
+        primary_objective <= optimum + DAY_AHEAD_COST_LOCK_TOLERANCE_USD,
+        name="canonical_primary_cost_lock",
+    )
+    terms = []
+    for group in variable_groups:
+        for variable in group.values():
+            digest = hashlib.sha256(variable.VarName.encode("utf-8")).digest()
+            weight = 0.5 + int.from_bytes(digest[:8], "big") / 2**64
+            terms.append(weight * variable)
+    model.setObjective(gp.quicksum(terms), "minimize")
+    model.optimize()
+    if model.getStatus() != "optimal":
+        raise RuntimeError(f"canonical day-ahead tie stage is {model.getStatus()}")
 
 
 class _GurobiModelAdapter:
@@ -593,6 +619,10 @@ def solve_wind_solar_storage(
     if model.getStatus() != "optimal":
         return _infeasible_day_ahead_result()
 
+    _canonical_day_ahead_tie_break(
+        model, grid_cost_expr + degradation_cost_expr,
+        batch, grid, p_ch, p_dis, curtailment,
+    )
     batch_values = [model.getVal(batch[t]) for t in range(hours)]
     grid_values = [model.getVal(grid[t]) for t in range(hours)]
     charge_values = [model.getVal(p_ch[t]) for t in range(hours)]
@@ -915,6 +945,10 @@ def solve_static_gamma_ro_wind_solar_storage(
             mip_gap=model.getGap(),
         )
 
+    _canonical_day_ahead_tie_break(
+        model, grid_cost_expr + degradation_cost_expr,
+        batch, grid, p_ch, p_dis, curtailment,
+    )
     batch_values = [model.getVal(batch[t]) for t in range(hours)]
     grid_values = [model.getVal(grid[t]) for t in range(hours)]
     charge_values = [model.getVal(p_ch[t]) for t in range(hours)]
@@ -1486,6 +1520,9 @@ def solve_saa_wind_solar_storage(
                 ),
             )
 
+    _canonical_day_ahead_tie_break(
+        model, primary_objective, batch, grid, p_ch, p_dis, curtailment,
+    )
     # 主问题只负责选择日前动作并验证“存在可行场景追索”。主问题最优后，
     # 将每个训练场景拆成独立连续回放，避免为不影响日前目标的词典序整理
     # 反复变换整个 30 天联合 MILP。
@@ -1863,16 +1900,10 @@ def _replay_joint_scenario_with_batch_recourse_gurobi(
     model.optimize()
     if model.Status != gp.GRB.OPTIMAL:
         raise RuntimeError(f"Gurobi batch recourse risk stage is {model.Status}")
-    selected_risk = (
-        round(violation_workload.X),
-        round(violation_grid.X),
-        round(violation_ramp.X),
-    )
+    minimum_risk_count = round(model.ObjVal)
     model.addConstr(
-        violation_workload == selected_risk[0], name="fix_violate_workload"
+        total_risk_violations == minimum_risk_count, name="fix_minimum_risk_count"
     )
-    model.addConstr(violation_grid == selected_risk[1], name="fix_violate_grid")
-    model.addConstr(violation_ramp == selected_risk[2], name="fix_violate_ramp")
     grid_cost_expr = gp.quicksum(prices[t] * grid[t] for t in range(hours))
     model.setObjective(grid_cost_expr, gp.GRB.MINIMIZE)
     model.optimize()
@@ -1919,6 +1950,11 @@ def _replay_joint_scenario_with_batch_recourse_gurobi(
             f"deviation_tolerance={deviation_tolerance:.17g}"
         )
 
+    selected_risk = (
+        round(violation_workload.X),
+        round(violation_grid.X),
+        round(violation_ramp.X),
+    )
     batch_values = [batch[t].X for t in range(hours)]
     grid_values = [grid[t].X for t in range(hours)]
     curtailment_values = [curtailment[t].X for t in range(hours)]
@@ -1949,7 +1985,7 @@ def _replay_joint_scenario_with_batch_recourse_gurobi(
         ],
         default=0.0,
     )
-    # 违反判定由第一层词典序的已固定二元选择定义。后续成本/调整/购电
+    # 第一层只锁定最小违反总数；通道组合读取最后一层的二元选择。成本/调整/购电
     # 平局阶段可能在 Big-M 与 MIP 容差下留下约 1e-6 的数值残差；若再次
     # 用更严的物理残差阈值覆盖二元选择，会把已证明为零违反的追索误报。
     if selected_risk[0] == 0:

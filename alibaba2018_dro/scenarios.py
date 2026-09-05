@@ -642,7 +642,7 @@ def attach_bootstrap_energy_replay(
     """为算力回放轨迹配对可复现的2024联合能源残差块自助样本。
 
     该函数用于压力/边界发现，不产生独立样本外能源观测。每个场景使用
-    ``energy_seed + scenario_id`` 独立初始化随机数生成器，并按完整24小时块
+    ``SeedSequence([energy_seed, scenario_id])`` 构造二维键随机流，并按完整24小时块
     有放回抽样，因而不同方法可按 ``scenario_id`` 严格配对复现。
     """
 
@@ -671,7 +671,9 @@ def attach_bootstrap_energy_replay(
         sampled_dates = tuple(
             _sample_energy_dates(
                 energy_dates,
-                rng=np.random.default_rng(energy_seed + scenario.scenario_id),
+                rng=np.random.default_rng(
+                    np.random.SeedSequence([energy_seed, scenario.scenario_id])
+                ),
                 days=hours // HOURS_PER_DAY,
             )
         )

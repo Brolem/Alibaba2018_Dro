@@ -10,7 +10,7 @@ import statistics
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from functools import partial
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -68,7 +68,8 @@ RUN_FIELDS = (
 )
 FAILURE_FIELDS = (
     "suite", "configuration", "method", "window",
-    "grid_limit_fraction_of_peak", "ramp_limit_fraction_of_peak", "error",
+    "grid_limit_fraction_of_peak", "ramp_limit_fraction_of_peak",
+    "deterministic_constraint_headroom_fraction_of_peak", "phase", "error",
 )
 
 
@@ -107,6 +108,7 @@ class SolvedPlan:
 def configurations(
     experiments: Sequence[str],
     methods: Sequence[str] | None = None,
+    names: Sequence[str] | None = None,
 ) -> list[Configuration]:
     selected: list[Configuration] = []
     if "main" in experiments:
@@ -145,9 +147,20 @@ def configurations(
                 )
             )
     if methods is None:
-        return selected
-    selected_methods = set(methods)
-    return [config for config in selected if config.method in selected_methods]
+        filtered = selected
+    else:
+        selected_methods = set(methods)
+        filtered = [config for config in selected if config.method in selected_methods]
+    if names is None:
+        return filtered
+    selected_names = set(names)
+    unknown = selected_names - {config.name for config in selected}
+    if unknown:
+        raise ValueError(
+            "unknown configuration(s) for selected experiments: "
+            + ", ".join(sorted(unknown))
+        )
+    return [config for config in filtered if config.name in selected_names]
 
 
 def _sha256(path: Path) -> str:
@@ -201,6 +214,114 @@ def _write_csv(path: Path, rows: Sequence[dict[str, object]]) -> None:
         writer = csv.DictWriter(output_file, fieldnames=list(rows[0]), lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
+
+
+def _write_plan(
+    output_directory: Path,
+    config: Configuration,
+    window: str,
+    solved: SolvedPlan,
+    common: dict[str, float],
+) -> None:
+    """Persist the actual day-ahead vectors used by every replay group."""
+
+    path = output_directory / "day_ahead_plans" / config.name / f"{window}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "suite": config.suite,
+        "configuration": config.name,
+        "method": config.method,
+        "window": window,
+        "energy_uncertainty": config.energy_uncertainty,
+        "workload_uncertainty": config.workload_uncertainty,
+        "physical_parameters": common,
+        "solver": {
+            "status": solved.solver_status,
+            "wall_time_seconds": solved.wall_time_seconds,
+            "runtime_seconds": solved.solver_runtime_seconds,
+            "mip_gap": solved.mip_gap,
+            "decomposition_iterations": solved.decomposition_iterations,
+            "active_scenario_count": solved.active_scenario_count,
+        },
+        "plan": asdict(solved.plan),
+    }
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_plan_equivalence_summary(
+    output_directory: Path,
+    configs: Sequence[Configuration],
+    windows: Sequence[str],
+) -> None:
+    """Compare persisted plans without treating equal objective values as equality."""
+
+    if len(configs) < 2:
+        return
+    reference = next(
+        (config for config in configs if config.method == "deterministic"),
+        configs[0],
+    )
+    vector_fields = (
+        "batch", "grid", "bess_charge", "bess_discharge", "curtailment"
+    )
+    rows: list[dict[str, object]] = []
+    for window in windows:
+        reference_path = (
+            output_directory / "day_ahead_plans" / reference.name / f"{window}.json"
+        )
+        if not reference_path.exists():
+            continue
+        reference_payload = json.loads(reference_path.read_text(encoding="utf-8"))
+        reference_plan = reference_payload["plan"]
+        for config in configs:
+            if config.name == reference.name:
+                continue
+            candidate_path = (
+                output_directory / "day_ahead_plans" / config.name / f"{window}.json"
+            )
+            if not candidate_path.exists():
+                continue
+            candidate_payload = json.loads(candidate_path.read_text(encoding="utf-8"))
+            candidate_plan = candidate_payload["plan"]
+            row: dict[str, object] = {
+                "window": window,
+                "reference_configuration": reference.name,
+                "candidate_configuration": config.name,
+                "operating_cost_difference_usd": (
+                    candidate_plan["operating_cost"]
+                    - reference_plan["operating_cost"]
+                ),
+            }
+            for field in vector_fields:
+                reference_values = reference_plan[field]
+                candidate_values = candidate_plan[field]
+                if len(reference_values) != len(candidate_values):
+                    raise ValueError(f"plan vector length mismatch for {field}")
+                row[f"max_abs_{field}_difference"] = max(
+                    (
+                        abs(float(candidate) - float(baseline))
+                        for baseline, candidate in zip(
+                            reference_values, candidate_values, strict=True
+                        )
+                    ),
+                    default=0.0,
+                )
+            row["candidate_max_simultaneous_charge_discharge_mw"] = max(
+                (
+                    min(float(charge), float(discharge))
+                    for charge, discharge in zip(
+                        candidate_plan["bess_charge"],
+                        candidate_plan["bess_discharge"],
+                        strict=True,
+                    )
+                ),
+                default=0.0,
+            )
+            rows.append(row)
+    _write_csv(output_directory / "plan_equivalence_summary.csv", rows)
 
 
 def _as_bool(value: object) -> bool:
@@ -743,6 +864,16 @@ def _parse_args() -> argparse.Namespace:
         default=list(METHODS),
         help="run only selected optimization methods",
     )
+    parser.add_argument(
+        "--configurations",
+        nargs="+",
+        default=None,
+        help=(
+            "optional exact configuration names after experiment/method filtering; "
+            "useful for low-cost diagnostics such as deterministic plus the "
+            "nominal/nominal ablation"
+        ),
+    )
     parser.add_argument("--windows", nargs="+", choices=WINDOWS, default=list(WINDOWS))
     parser.add_argument(
         "--evaluation-energy-mode",
@@ -772,6 +903,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--replay-workers", type=int, default=4)
     parser.add_argument("--time-limit-seconds", type=float, default=300.0)
     parser.add_argument("--decomposition-max-iterations", type=int, default=8)
+    parser.add_argument(
+        "--solve-only",
+        action="store_true",
+        help="persist day-ahead plans without launching the 100-scenario replay",
+    )
     parser.add_argument(
         "--grid-limit-fraction-of-peak",
         type=float,
@@ -857,7 +993,7 @@ def main() -> None:
     experiments = tuple(dict.fromkeys(args.experiments))
     methods = tuple(dict.fromkeys(args.methods))
     windows = tuple(dict.fromkeys(args.windows))
-    selected_configs = configurations(experiments, methods)
+    selected_configs = configurations(experiments, methods, args.configurations)
     if not selected_configs:
         raise ValueError("the selected experiments contain none of the selected methods")
     if (
@@ -875,11 +1011,17 @@ def main() -> None:
         for window in windows
     }
     config_payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "protocol": "unified_2025_four_energy_windows_100_conditional_workload_replays_v1",
         "interpretation": "four energy observations; within each window 100 workload trajectories estimate conditional workload risk and are not independent energy samples",
         "experiments": list(experiments), "windows": list(windows),
         "parameters": {
+            "numerical_protocol": "risk_count_lock_canonical_dayahead_v2",
+            "energy_random_stream": "SeedSequence([energy_seed, scenario_id])",
+            "day_ahead_tie_break": "sha256_variable_name_linear_v1",
+            "day_ahead_cost_lock_tolerance_usd": 1e-4,
+            "recourse_cost_lock_tolerance_usd": 1e-4,
+            "recourse_deviation_lock_tolerance_mwh": 1e-5,
             "sample_size": SAMPLE_SIZE, "beta": BETA, "gamma": GAMMA,
             "gamma_energy_quantile": ENERGY_QUANTILE, "rho": RHO,
             "replay_workers": args.replay_workers,
@@ -895,6 +1037,9 @@ def main() -> None:
             "manifest": _sha256(args.manifest), "calibration_day_blocks": _sha256(args.calibration_csv),
             "aggregate_workload": _sha256(args.aggregate_workload_csv),
             "nominal_workload": _sha256(args.envelope_csv), "workload_stats": _sha256(args.stats_json),
+            "scheduler_code": _sha256(PROJECT_ROOT / "alibaba2018_dro" / "scheduler.py"),
+            "scenarios_code": _sha256(PROJECT_ROOT / "alibaba2018_dro" / "scenarios.py"),
+            "runner_code": _sha256(Path(__file__)),
             **{f"energy_{window}": _sha256(path) for window, path in energy_files.items()},
         },
     }
@@ -915,8 +1060,8 @@ def main() -> None:
                 "energy_residual_scale": args.energy_residual_scale,
             }
         )
-    # Keep the frozen default run_config byte-for-byte compatible. Stress runs
-    # record the changed physical boundary explicitly in their own directory.
+    # Non-default physical boundaries are explicit. Schema v2 intentionally
+    # rejects resume from an older numerical/random-stream protocol directory.
     if abs(args.ramp_limit_fraction_of_peak - 0.10) > 1e-12:
         config_payload["parameters"]["ramp_limit_fraction_of_peak"] = (
             args.ramp_limit_fraction_of_peak
@@ -1023,10 +1168,20 @@ def main() -> None:
                             "deterministic_constraint_headroom_fraction_of_peak": (
                                 args.deterministic_constraint_headroom_fraction_of_peak
                             ),
+                            "phase": "solve",
                             "error": str(error),
                         },
                     )
                     raise
+                _write_plan(
+                    args.output_directory, config, window, solved, common
+                )
+                if args.solve_only:
+                    print(
+                        "solve_only_done:", config.name, window,
+                        f"cost={solved.plan.operating_cost:.9f}", flush=True,
+                    )
+                    continue
                 evaluation_scenarios = (
                     bootstrap_replay_scenarios
                     if bootstrap_replay_scenarios is not None
@@ -1036,10 +1191,34 @@ def main() -> None:
                     "replay_start:", config.name, window, "count=100",
                     f"solve_wall={solved.wall_time_seconds:.3f}s", flush=True,
                 )
-                cached_rows = _replay_rows(
-                    config, window, inputs, solved, common, evaluation_scenarios,
-                    replay_workers=args.replay_workers,
-                )
+                try:
+                    cached_rows = _replay_rows(
+                        config, window, inputs, solved, common,
+                        evaluation_scenarios,
+                        replay_workers=args.replay_workers,
+                    )
+                except RuntimeError as error:
+                    _record_failure(
+                        args.output_directory / "failures.csv",
+                        {
+                            "suite": config.suite,
+                            "configuration": config.name,
+                            "method": config.method,
+                            "window": window,
+                            "grid_limit_fraction_of_peak": (
+                                args.grid_limit_fraction_of_peak
+                            ),
+                            "ramp_limit_fraction_of_peak": (
+                                args.ramp_limit_fraction_of_peak
+                            ),
+                            "deterministic_constraint_headroom_fraction_of_peak": (
+                                args.deterministic_constraint_headroom_fraction_of_peak
+                            ),
+                            "phase": "replay",
+                            "error": str(error),
+                        },
+                    )
+                    raise
                 solve_cache[cache_key] = (solved, common, cached_rows)
             _, _, source_rows = solve_cache[cache_key]
             rows = [
@@ -1060,9 +1239,19 @@ def main() -> None:
     _write_available_summaries(
         args.output_directory, run_path, selected_configs, windows, experiments
     )
-    print("written:", run_path, flush=True)
-    print("written:", args.output_directory / "window_summary.csv", flush=True)
-    print("written:", args.output_directory / "overall_summary.csv", flush=True)
+    if args.solve_only:
+        _write_plan_equivalence_summary(
+            args.output_directory, selected_configs, windows
+        )
+        print("written:", args.output_directory / "day_ahead_plans", flush=True)
+        print(
+            "written:", args.output_directory / "plan_equivalence_summary.csv",
+            flush=True,
+        )
+    else:
+        print("written:", run_path, flush=True)
+        print("written:", args.output_directory / "window_summary.csv", flush=True)
+        print("written:", args.output_directory / "overall_summary.csv", flush=True)
 
 
 if __name__ == "__main__":
