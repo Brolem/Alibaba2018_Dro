@@ -1,0 +1,2 @@
+suite,configuration,method,window,grid_limit_fraction_of_peak,ramp_limit_fraction_of_peak,deterministic_constraint_headroom_fraction_of_peak,phase,error
+ablation,tv_dro_energy_1_workload_1,tv_dro,2025-04-01,0.85,0.075,0.0,replay,GurobiError: Out of memory with replay_workers=10
