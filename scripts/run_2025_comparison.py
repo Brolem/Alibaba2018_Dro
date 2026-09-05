@@ -1151,7 +1151,7 @@ def main() -> None:
                             args.deterministic_constraint_headroom_fraction_of_peak
                         ),
                     )
-                except RuntimeError as error:
+                except Exception as error:
                     _record_failure(
                         args.output_directory / "failures.csv",
                         {
@@ -1197,7 +1197,7 @@ def main() -> None:
                         evaluation_scenarios,
                         replay_workers=args.replay_workers,
                     )
-                except RuntimeError as error:
+                except Exception as error:
                     _record_failure(
                         args.output_directory / "failures.csv",
                         {
